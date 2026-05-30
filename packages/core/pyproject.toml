@@ -1,0 +1,18 @@
+[project]
+name = "llm-core"
+version = "0.1.0"
+description = "Shared config, paths, pydantic models"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2",
+    "pyturso>=0.6.1",
+    "pyyaml",
+]
+
+[project.scripts]
+warehouse-smoke = "llm_core.warehouse_smoke:main"
+clear-gpu-vram = "llm_core.clear_gpu_vram:main"
+
+[build-system]
+requires = ["uv_build>=0.11.16,<0.12.0"]
+build-backend = "uv_build"

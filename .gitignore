@@ -1,0 +1,32 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+
+# Data volumes (PLAN.md)
+data/
+adapters/
+exports/
+runs/
+
+# Env
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+
+# Dashboard (Bun — Phase 1.5)
+apps/dashboard/node_modules/
+apps/dashboard/dist/
+
+# Legacy / generated train artifacts
+unsloth_compiled_cache/
+
+# OS
+.DS_Store

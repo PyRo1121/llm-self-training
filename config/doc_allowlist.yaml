@@ -1,0 +1,35 @@
+# Tier-0 doc sources for local RAG (non-Context7 crawl only).
+# Entries with context7_library_id are skipped by rag-index — use Context7 MCP at inference.
+
+defaults:
+  chunk_size: 512
+  chunk_overlap: 50
+  max_chars_per_source: 200000
+
+sources:
+  - id: fastapi
+    url: https://fastapi.tiangolo.com/llms.txt
+    kind: llms_txt
+    tier: 0
+    context7_library_id: /tiangolo/fastapi
+
+  - id: chromadb
+    url: https://docs.trychroma.com/llms.txt
+    kind: llms_txt
+    tier: 0
+
+  - id: chronicals
+    url: https://github.com/Ajwebdevs/Chronicals
+    kind: llms_txt
+    tier: 0
+
+  - id: turso
+    url: https://docs.turso.tech/llms.txt
+    kind: llms_txt
+    tier: 0
+
+  - id: pydantic
+    url: https://docs.pydantic.dev/llms.txt
+    kind: llms_txt
+    tier: 0
+    context7_library_id: /pydantic/pydantic

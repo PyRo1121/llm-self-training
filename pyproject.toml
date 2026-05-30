@@ -1,0 +1,56 @@
+[project]
+name = "llm-self-training"
+version = "0.4.0"
+description = "Local private coding copilot — RAG, QLoRA, eval-gated loop"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "llm-core",
+    "chromadb>=1.5",
+    "crawl4ai>=0.8.6",
+    "rank-bm25>=0.2.2",
+    "pydantic>=2",
+    "pyyaml",
+    "httpx",
+    "tqdm",
+    "uvicorn[standard]>=0.30",
+    "fastapi>=0.115",
+    "gitpython",
+]
+
+[project.optional-dependencies]
+train = ["llm-train[unsloth]"]
+dataprep = ["llm-dataprep[git]"]
+rag-chunk = ["chonkie[code]>=1.6"]
+merge = ["mergekit>=0.0.5"]
+eval-extra = ["ragas>=0.2"]
+
+[dependency-groups]
+dev = ["ruff>=0.9", "pytest>=8"]
+
+[tool.uv]
+# mergekit (<pydantic 2.11) and fastmcp (>=2.11.7) cannot coexist — install separately
+conflicts = [
+    [
+        { package = "llm-self-training", extra = "merge" },
+        { package = "llm-rag", extra = "mcp" },
+    ],
+]
+
+[tool.uv.workspace]
+members = [
+    "packages/*",
+    "apps/api",
+    "services/logger",
+]
+
+[tool.uv.sources]
+llm-core = { workspace = true }
+llm-dataprep = { workspace = true }
+llm-rag = { workspace = true }
+llm-train = { workspace = true }
+llm-eval = { workspace = true }
+llm-benchmarks = { workspace = true }
+llm-orchestrator = { workspace = true }
+llm-api = { workspace = true }
+llm-logger = { workspace = true }

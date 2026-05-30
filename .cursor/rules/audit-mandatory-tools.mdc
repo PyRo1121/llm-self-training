@@ -1,0 +1,18 @@
+---
+description: Mandatory Context7 + Exa + Shell + Repo for all agent tasks (see AGENTS.md)
+alwaysApply: true
+---
+
+# Mandatory tools (all tasks)
+
+Read root `AGENTS.md` first. Tool matrix applies to audits, implementation, debugging, and research — not memory-only claims.
+
+Before any audit PASS, phase sign-off, or promote approval:
+
+1. Read `AGENTS.md` and `docs/AUDIT-PROTOCOL.md`.
+2. Use **Context7** MCP (`resolve-library-id`, `query-docs`) for library contracts in scope.
+3. Use **Exa** MCP (`web_search_exa`) for external facts; if rate-limited, verdict **INCOMPLETE**, not PASS.
+4. Run **Shell** verification commands; paste exit codes and output.
+5. Cite **Repo** with `path:line` from Read/Grep — never memory-only.
+
+When dispatching `Task` subagents for review: `readonly: false`, include AUDIT MODE block from `AGENTS.md`.

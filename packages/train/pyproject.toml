@@ -1,0 +1,45 @@
+[project]
+name = "llm-train"
+version = "0.3.0"
+description = "Unsloth/Chronicals QLoRA training and export for LLM Self Training"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "llm-core",
+    "torch",
+    "transformers>=4.40",
+    "datasets>=4.7",
+    "peft>=0.18",
+    "trl>=1.5",
+    "bitsandbytes",
+    "accelerate>=0.34",
+]
+
+[project.optional-dependencies]
+unsloth = [
+    "unsloth @ git+https://github.com/unslothai/unsloth.git",
+    "multiprocess>=0.70",
+    "pillow",
+    "sentencepiece>=0.2.0",
+    "protobuf>=3.20",
+    "hf-transfer",
+    "cut-cross-entropy",
+    "torchao",
+]
+chronicals = [
+    "chronicals[kernels,training,8bit]>=0.1.4",
+    "liger-kernel>=0.5.0",
+]
+
+[project.scripts]
+train-qlora = "llm_train.train_qlora:main"
+train-preflight = "llm_train.preflight:main"
+train-export = "llm_train.export_gguf:main"
+train-register = "llm_train.register_run:main"
+train-download-base = "llm_train.download_base:main"
+
+[build-system]
+requires = ["uv_build>=0.11.16,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+llm-core = { workspace = true }

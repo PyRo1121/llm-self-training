@@ -1,0 +1,29 @@
+[project]
+name = "llm-rag"
+version = "0.1.0"
+description = "Allowlist RAG — Chroma + Ollama embeds + thin FastMCP"
+readme = "README.md"
+authors = [
+    { name = "Olen Latham", email = "olen@latham.cloud" }
+]
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "llm-core",
+    "chromadb>=1.5",
+    "httpx>=0.27",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+mcp = ["fastmcp>=3.0.2"]
+
+[project.scripts]
+rag-index = "llm_rag.cli:run_index"
+# MCP: uv sync --package llm-rag --extra mcp && python -m llm_rag.mcp_server
+
+[build-system]
+requires = ["uv_build>=0.11.16,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+llm-core = { workspace = true }

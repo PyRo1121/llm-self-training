@@ -1,0 +1,1 @@
+{"id": "debug-example-001", "prompt": "Fix the bug: tests fail with AssertionError.", "context": "def add(a, b):\n    return a - b  # bug\n", "expected_signal": "tests_pass", "meta": {"note": "Replace with real debug tasks from your sessions"}}

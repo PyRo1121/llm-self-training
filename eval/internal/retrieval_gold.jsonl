@@ -1,0 +1,1 @@
+{"id": "rag-example-001", "query": "Where is the training config defined?", "expected_doc_id": "REPLACE", "meta": {"note": "Replace after RAG ingest; used for hit-rate@5 gate"}}

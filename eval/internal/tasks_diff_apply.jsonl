@@ -1,0 +1,1 @@
+{"id": "example-001", "repo": "REPLACE_ME", "base_commit": "REPLACE_SHA", "prompt": "Apply the patch for the described fix.", "patch": "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-# old\n+# new\n", "test_cmd": "true", "meta": {"note": "Replace with a real frozen snapshot from your repos"}}

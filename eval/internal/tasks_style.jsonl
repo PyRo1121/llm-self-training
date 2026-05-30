@@ -1,0 +1,1 @@
+{"id": "style-example-001", "prompt": "Refactor this function to match project style.", "context": "def foo():\n    pass\n", "meta": {"style_tags": ["python"], "note": "Replace with real style tasks; judged via VERDICT protocol"}}

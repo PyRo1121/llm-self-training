@@ -1,0 +1,22 @@
+[project]
+name = "llm-api"
+version = "0.1.0"
+description = "FastAPI control plane for dashboard and warehouse"
+requires-python = ">=3.11"
+dependencies = [
+    "llm-core",
+    "llm-rag",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
+
+[tool.uv.sources]
+llm-core = { workspace = true }
+llm-rag = { workspace = true }
+
+[project.scripts]
+llm-api = "llm_api.main:run"
+
+[build-system]
+requires = ["uv_build>=0.11.16,<0.12.0"]
+build-backend = "uv_build"
