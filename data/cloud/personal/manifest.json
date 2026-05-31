@@ -1,0 +1,23 @@
+{
+  "exported_at": "2026-05-31T02:55:07.137493+00:00",
+  "source_curated": "data/curated/curated-2026-05-31.jsonl",
+  "total_tier1_personal_rows": 3877,
+  "harnesses": {
+    "codex": {
+      "rows": 2452,
+      "file": "harnesses/codex.jsonl"
+    },
+    "cursor": {
+      "rows": 1402,
+      "file": "harnesses/cursor.jsonl"
+    },
+    "opencode": {
+      "rows": 18,
+      "file": "harnesses/opencode.jsonl"
+    },
+    "t3code": {
+      "rows": 5,
+      "file": "harnesses/t3code.jsonl"
+    }
+  }
+}

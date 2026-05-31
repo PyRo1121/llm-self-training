@@ -4,22 +4,18 @@ One-command **Vast.ai** H100 training. Jarvis alternative: [../oss/CLOUD-TRAIN.m
 
 ## Quick start (Vast)
 
+Secrets live in **`config/cloud.env`** and **`.env`** in the repo (zero-config clone on Vast).
+
 ```bash
-# 1. One-time local
-pip install vastai
-vastai set api-key YOUR_KEY          # https://cloud.vast.ai/manage-keys/
+# One-time local
+pip install vastai && vastai set api-key $(grep VAST_API_KEY config/cloud.env | cut -d= -f2)
 vastai create ssh-key ~/.ssh/id_ed25519.pub
 
-cp config/cloud.env.example config/cloud.env
-# Fill: VAST_API_KEY, HF_TOKEN, GITHUB_TOKEN (private repo PAT)
+git push   # Vast clones main — includes personal data + HF_TOKEN
 
-git push   # instance clones main on boot — push before launch
-
-# 2. Smoke (~cheap — validates ingest + 5 train steps)
 make cloud-vast-smoke
-
-# 3. Full run
 make cloud-vast
+```
 
 # 4. Pull adapter + GGUF export
 make cloud-vast-pull

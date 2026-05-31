@@ -269,8 +269,14 @@ lint: ## Ruff check packages + API (no GPU)
 
 .PHONY: cloud-pack cloud-export-personal cloud-vast cloud-vast-smoke cloud-vast-pull cloud-vast-destroy \
 	cloud-jarvis cloud-jarvis-smoke cloud-train-local
-cloud-export-personal: ## Export tier-1 personal → data/cloud/personal/
+cloud-export-personal: ## Export tier-1 personal → data/cloud/personal/ (+ harness shards)
 	bash scripts/cloud/export-personal-for-git.sh
+
+cloud-export-all: sync-dataprep ## Ingest all local harnesses → curate → cloud export
+	$(UV) llm-dataprep agent-ingest
+	$(UV) llm-dataprep curate-raw --no-gitleaks --no-presidio --latest-per-prefix \
+		--exclude-glob 'public-*.jsonl'
+	$(MAKE) cloud-export-personal
 
 cloud-pack: ## Local tier-1 → private HF dataset (alternative to git)
 	bash scripts/cloud/pack-personal.sh

@@ -38,9 +38,21 @@ log "clone ${REPO_SLUG}@${REF}"
 git clone --depth 1 --branch "${REF}" "${CLONE_URL}" "${WORKDIR}"
 cd "${WORKDIR}"
 
+# Secrets from committed config/cloud.env (public/private repo) + Vast instance env
+if [[ -f "${WORKDIR}/config/cloud.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${WORKDIR}/config/cloud.env"
+  set +a
+fi
+
 if [[ -n "${HF_TOKEN:-}" ]]; then
   printf '%s' "${HF_TOKEN}" > /home/hf_token
   chmod 600 /home/hf_token
+  export HF_TOKEN
+  log "HF_TOKEN ready (/home/hf_token + env)"
+else
+  log "WARNING: HF_TOKEN missing — gated HF datasets will skip"
 fi
 
 if [[ -n "${LLM_DATA_DIR:-}" ]]; then

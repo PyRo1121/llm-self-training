@@ -92,9 +92,31 @@ else
 fi
 
 REPO_PERSONAL="${ROOT}/data/cloud/personal/personal-tier1.jsonl"
+PERSONAL_IMPORT="${ROOT}/data/curated/imported-personal.jsonl"
+
+_import_personal_bundle() {
+  local label="$1"
+  shift
+  echo "=== [4/11] Personal data: ${label} ==="
+  : > "${PERSONAL_IMPORT}"
+  local part n=0
+  for part in "$@"; do
+    if [[ -f "${part}" ]]; then
+      cat "${part}" >> "${PERSONAL_IMPORT}"
+      n=$((n + $(wc -l < "${part}" | tr -d ' ')))
+    fi
+  done
+  echo "Personal rows merged: ${n} → ${PERSONAL_IMPORT}"
+}
+
 if [[ -f "${REPO_PERSONAL}" ]]; then
-  echo "=== [4/11] Personal data from repo: ${REPO_PERSONAL} ==="
-  cp "${REPO_PERSONAL}" data/curated/imported-personal.jsonl
+  _import_personal_bundle "repo personal-tier1.jsonl" "${REPO_PERSONAL}"
+elif compgen -G "${ROOT}/data/cloud/personal/harnesses/"'*.jsonl' > /dev/null; then
+  PARTS=()
+  while IFS= read -r -d '' f; do PARTS+=("$f"); done < <(
+    find "${ROOT}/data/cloud/personal/harnesses" -name '*.jsonl' -type f -print0 2>/dev/null | sort -z
+  )
+  _import_personal_bundle "harness shards (${#PARTS[@]} files)" "${PARTS[@]}"
 elif [[ -n "${DATA_REPO_URL}" ]]; then
   echo "=== [4/11] Clone private data repo: ${DATA_REPO_URL} ==="
   rm -rf data/cloud/personal/_clone

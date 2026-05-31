@@ -110,6 +110,11 @@ ENV_BLOCK+=" -e HF_XET_HIGH_PERFORMANCE=1"
 ENV_BLOCK+=" -e HF_XET_NUM_CONCURRENT_RANGE_GETS=24"
 [[ -n "${HF_TOKEN:-}" ]] && ENV_BLOCK+=" -e HF_TOKEN=${HF_TOKEN}"
 [[ -n "${GITHUB_TOKEN:-}" ]] && ENV_BLOCK+=" -e GITHUB_TOKEN=${GITHUB_TOKEN}"
+
+if [[ -z "${HF_TOKEN:-}" ]]; then
+  echo "WARNING: HF_TOKEN not set — add to config/cloud.env or .env" >&2
+fi
+echo "=== Passing to Vast container env: HF_TOKEN=$([[ -n "${HF_TOKEN:-}" ]] && echo set || echo MISSING) VAST_API_KEY=$([[ -n "${VAST_API_KEY:-}" ]] && echo set || echo MISSING) ==="
 [[ -n "${LLM_DATA_DIR:-}" ]] && ENV_BLOCK+=" -e LLM_DATA_DIR=${LLM_DATA_DIR}"
 [[ -n "${CLOUD_TRAIN_MAX_STEPS:-}" ]] && ENV_BLOCK+=" -e CLOUD_TRAIN_MAX_STEPS=${CLOUD_TRAIN_MAX_STEPS}"
 [[ "${VAST_SMOKE:-0}" == "1" ]] && ENV_BLOCK+=" -e VAST_SMOKE=1"

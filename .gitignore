@@ -30,6 +30,10 @@ data/cloud/*
 data/cloud/personal/*
 !data/cloud/personal/.gitkeep
 !data/cloud/personal/personal-tier1.jsonl
+!data/cloud/personal/manifest.json
+!data/cloud/personal/harnesses/
+data/cloud/personal/harnesses/*
+!data/cloud/personal/harnesses/*.jsonl
 adapters/
 exports/
 runs/
@@ -60,7 +64,7 @@ triton/
 *.npy
 *.npz
 
-# --- Secrets & credentials ---
+# --- Secrets & credentials (local only — GitHub push protection blocks HF tokens) ---
 .env
 .env.*
 !.env.example
