@@ -60,7 +60,7 @@ jl run . \
   --storage "${STORAGE}" \
   --name "${RUN}" \
   "${FS_FLAG[@]}" \
-  --setup "bash scripts/cloud/setup-jarvis.sh" \
+  --setup "bash scripts/cloud/setup-cloud.sh" \
   "${KEEP_FLAG[@]}" \
   --yes \
   -- \

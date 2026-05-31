@@ -264,15 +264,28 @@ lint: ## Ruff check packages + API (no GPU)
 	uv run ruff check packages apps/api
 
 # =============================================================================
-# Cloud — Jarvis H100 (docs/oss/CLOUD-TRAIN.md)
+# Cloud — Vast.ai (primary) + Jarvis (docs/oss/CLOUD-TRAIN.md, docs/cloud/)
 # =============================================================================
 
-.PHONY: cloud-pack cloud-export-personal cloud-jarvis cloud-jarvis-smoke cloud-train-local
-cloud-export-personal: ## Export tier-1 personal → data/cloud/personal/ (private repo only)
+.PHONY: cloud-pack cloud-export-personal cloud-vast cloud-vast-smoke cloud-vast-pull cloud-vast-destroy \
+	cloud-jarvis cloud-jarvis-smoke cloud-train-local
+cloud-export-personal: ## Export tier-1 personal → data/cloud/personal/
 	bash scripts/cloud/export-personal-for-git.sh
 
 cloud-pack: ## Local tier-1 → private HF dataset (alternative to git)
 	bash scripts/cloud/pack-personal.sh
+
+cloud-vast-smoke: ## Vast H100: rent + smoke (5 train steps)
+	bash scripts/cloud/run-vast.sh --smoke-only
+
+cloud-vast: ## Vast H100: rent + full ingest/train/export
+	bash scripts/cloud/run-vast.sh
+
+cloud-vast-pull: ## Pull runs/exports from last (or INSTANCE=) Vast box
+	bash scripts/cloud/vast-pull.sh
+
+cloud-vast-destroy: ## Destroy Vast instance (stop billing)
+	bash scripts/cloud/vast-destroy.sh
 
 cloud-jarvis-smoke: ## Jarvis H100 smoke (ingest + 5 train steps)
 	bash scripts/cloud/run-jarvis.sh --smoke-only

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Jarvis H100 full pipeline: personal HF bundle → public ingest → train → export.
+# Cloud GPU full pipeline: personal → public ingest → train → export (Jarvis / Vast / SSH).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
@@ -56,6 +56,13 @@ mkdir -p data/raw data/curated data/train data/warehouse runs exports
 
 if [[ -f "${HF_TOKEN_FILE}" ]]; then
   export HF_TOKEN="$(tr -d '[:space:]' < "${HF_TOKEN_FILE}")"
+elif [[ -n "${HF_TOKEN:-}" ]]; then
+  :
+elif [[ -f "${ROOT}/config/cloud.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${ROOT}/config/cloud.env"
+  set +a
 elif [[ -f "${ROOT}/.env" ]]; then
   set -a
   # shellcheck disable=SC1091
@@ -192,4 +199,5 @@ echo ""
 echo "=== DONE ==="
 echo "  Adapter: runs/${RUN}/adapter"
 echo "  Export:  exports/${RUN}/"
-echo "  Download: jl download <machine_id> ${ROOT}/runs/${RUN} ./runs/${RUN} -r"
+echo "  Download: make cloud-vast-pull INSTANCE=<id>  (Vast)"
+echo "            jl download <machine_id> runs/${RUN} ./runs/${RUN} -r  (Jarvis)"

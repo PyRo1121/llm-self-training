@@ -37,6 +37,9 @@ wandb/
 mlruns/
 logs/
 *.log
+.vast/last-instance-id
+.vast/last-instance-label
+.vast/last-instance-created
 
 # --- Model weights & large binaries (local train/export only) ---
 *.gguf
@@ -61,6 +64,8 @@ triton/
 .env
 .env.*
 !.env.example
+config/cloud.env
+!config/cloud.env.example
 *.pem
 *.key
 *.p12

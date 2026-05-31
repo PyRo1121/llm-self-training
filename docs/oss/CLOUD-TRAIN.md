@@ -1,4 +1,8 @@
-# Cloud training on Jarvis H100
+# Cloud training on H100 (Vast.ai or Jarvis)
+
+**Primary:** [docs/cloud/README.md](../cloud/README.md) — `make cloud-vast` one-command Vast launch.
+
+**Jarvis:** managed `jl` CLI below.
 
 Run a **75/25 personal/public** QLoRA promote on rented H100 with full public ingest support (multi-million-row HF datasets).
 

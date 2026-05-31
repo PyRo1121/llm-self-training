@@ -1,5 +1,5 @@
-# H100 80GB cloud profile — LLM_CONFIG_PROFILE=cloud-h100 (see docs/oss/CLOUD-TRAIN.md)
-# Jarvis IN2: 24 vCPU, 200GB RAM, multi-TB SSD. Use with: train-qlora --cloud
+# H100 80GB cloud profile — LLM_CONFIG_PROFILE=cloud-h100 (Vast / Jarvis / SSH)
+# Typical box: 24+ vCPU, 200GB+ RAM, 600GB+ SSD. Use with: train-qlora --cloud
 
 train:
   promote:
