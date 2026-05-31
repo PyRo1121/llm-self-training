@@ -2,8 +2,20 @@
 
 from __future__ import annotations
 
+import importlib.util
+
+from llm_train.quiet import apply_train_quiet, suppress_unsloth_import_noise
+
+apply_train_quiet()
+
+# Unsloth kernels must load before transformers/trl (see unsloth __init__ warning).
+if importlib.util.find_spec("unsloth") is not None:
+    with suppress_unsloth_import_noise():
+        import unsloth  # noqa: F401, E402
+
 import argparse
 import json
+import os
 import signal
 import sys
 from pathlib import Path
@@ -27,8 +39,12 @@ from llm_train.dataset import (
 from llm_train.dataset_filter import filter_dataset_to_max_tokens, max_chars_for_seq
 from llm_train.vram_budget import (
     _hard_max_seq,
+    downgrade_seq_for_post_load,
     log_vram_snapshot,
+    plan_unsloth_training,
+    post_load_vram_ok,
     resolve_vram_train_params,
+    unsloth_vram_seq_ceiling,
 )
 
 
@@ -61,6 +77,28 @@ def _resolve_backend(args) -> str:
     if args.backend:
         return args.backend.lower()
     return default_train_backend()
+
+
+def _resolve_max_steps(
+    *,
+    args_max_steps: int | None,
+    steps_per_epoch: int,
+    epochs: float,
+    max_steps_cap: int | None,
+    clamp_one_epoch: bool,
+    smoke: bool,
+) -> int:
+    if smoke:
+        return 5
+    if args_max_steps is not None:
+        return args_max_steps
+    if clamp_one_epoch:
+        target = steps_per_epoch
+    else:
+        target = int(steps_per_epoch * epochs)
+    if max_steps_cap is None:
+        return max(1, target)
+    return max(1, min(target, int(max_steps_cap)))
 
 
 def _attach_weighted_sampler(trainer, cfg: dict) -> None:
@@ -122,9 +160,19 @@ def main() -> None:
     parser.add_argument("--epochs", type=float, default=None)
     parser.add_argument("--lora-r", type=int, default=None)
     parser.add_argument("--no-gpu-mutex", action="store_true")
+    parser.add_argument(
+        "--cloud",
+        action="store_true",
+        help="Jarvis H100 profile (LLM_CONFIG_PROFILE=cloud-h100, promote, no gpu_mutex)",
+    )
     parser.add_argument("--gpu-reclaim-warn-only", action="store_true")
     parser.add_argument("--gpu-reclaim-conservative", action="store_true")
     args = parser.parse_args()
+
+    if args.cloud:
+        os.environ.setdefault("LLM_CONFIG_PROFILE", "cloud-h100")
+        args.promote = True
+        args.no_gpu_mutex = True
 
     backend = _resolve_backend(args)
     cfg = train_settings(promote=args.promote, decensor=args.decensor)
@@ -160,14 +208,14 @@ def main() -> None:
         dec = decensor_settings()
         print(
             f"Decensor profile ({backend}): base={dec['base_model']} — "
-            "see docs/CODING-SAFEGUARDS.md",
+            "see docs/oss/CODING-SAFEGUARDS.md",
             flush=True,
         )
     elif args.promote:
         if backend == "unsloth":
             print(
-                "Promote profile (Unsloth): seq≤2048, r=32, all-linear, RSLoRA, "
-                "LR=1.5e-4, eff_batch≈12, max_grad_norm=1.0",
+                "Promote profile (Unsloth): token audit + VRAM cap, r=32, RSLoRA, "
+                "LR=1.5e-4, eff_batch→16, one epoch, eval holdout",
                 flush=True,
             )
         else:
@@ -216,14 +264,88 @@ def main() -> None:
 def _run_train_unsloth(args, cfg: dict, unsloth: dict, train_path: Path, stats: dict) -> None:
     from trl import SFTTrainer
 
+    from llm_train.token_audit import audit_messages_lengths, print_token_audit
     from llm_train.unsloth_runtime import (
         apply_train_on_responses_only,
+        attach_unsloth_lora_plus,
         build_unsloth_sft_config,
+        compute_eval_steps,
         load_unsloth_model,
+        load_unsloth_tokenizer,
+        maybe_pack_unsloth_dataset,
+        prepare_unsloth_messages_dataset,
+        resolve_unsloth_runtime_flags,
+        resolve_unsloth_runtime_flags,
+        split_train_eval_dataset,
     )
 
     out_dir = args.output_dir or default_output_dir(args.run_name)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    import torch
+
+    free_gb, total_gb = (x / (1024**3) for x in torch.cuda.mem_get_info())
+    vram_ceiling, ceiling_note = unsloth_vram_seq_ceiling(
+        cfg, unsloth, free_gb=free_gb, total_gb=total_gb
+    )
+
+    max_examples = 128 if args.smoke else None
+    raw_chars = cfg.get("max_chars_per_message")
+    pre_char_seq = min(int(cfg["max_seq_length"]), vram_ceiling)
+    char_cap = int(raw_chars) if raw_chars is not None else max_chars_for_seq(pre_char_seq)
+    dataset, _sample_weights = load_messages_dataset(
+        train_path,
+        max_examples=max_examples,
+        max_chars_per_message=char_cap,
+    )
+    print(f"Dataset char cap per message: {char_cap}", flush=True)
+    print(f"Training examples (raw): {len(dataset)}", flush=True)
+
+    token_rec: int | None = None
+    token_audit_report = None
+    if unsloth.get("token_audit", True) and not args.smoke:
+        tok = load_unsloth_tokenizer(cfg, unsloth)
+        token_audit_report, _ = audit_messages_lengths(
+            dataset,
+            tok,
+            yaml_cap=int(cfg["max_seq_length_12gb_cap"]),
+            vram_ceiling=vram_ceiling,
+                percentile=float(unsloth.get("token_audit_percentile", 95)),
+                round_to=int(unsloth.get("token_audit_round_to", 256)),
+                min_seq=int(unsloth.get("token_audit_min_seq", 512)),
+                headroom_ratio=float(unsloth.get("token_audit_headroom_ratio", 1.05)),
+        )
+        print_token_audit(token_audit_report)
+        token_rec = token_audit_report.recommended_seq
+        if token_audit_report.would_drop_assistant_at_cap > len(dataset) * 0.25:
+            print(
+                f"Warning: ~{token_audit_report.would_drop_assistant_at_cap} rows may lose "
+                f"assistant tokens @ cap {token_audit_report.effective_cap} — "
+                "consider flash-attn + packing or dataprep chunking",
+                flush=True,
+            )
+
+    plan = plan_unsloth_training(
+        cfg,
+        unsloth,
+        smoke=args.smoke,
+        free_gb=free_gb,
+        total_gb=total_gb,
+        token_recommended_seq=token_rec,
+    )
+    max_seq = plan.max_seq
+    batch_size = plan.batch_size
+    grad_accum = plan.grad_accum
+    vram_reason = f"{ceiling_note}; {plan.reason}"
+    flags = resolve_unsloth_runtime_flags(unsloth)
+    print(
+        f"VRAM budget: {vram_reason} → batch={batch_size} "
+        f"seq<={max_seq} grad_accum={grad_accum} "
+        f"FA2={flags['flash_attn']} pack={flags['use_packing']}",
+        file=sys.stderr,
+        flush=True,
+    )
+
     (out_dir / "train_config.json").write_text(
         json.dumps(
             {
@@ -231,61 +353,100 @@ def _run_train_unsloth(args, cfg: dict, unsloth: dict, train_path: Path, stats: 
                 "settings": cfg,
                 "unsloth": unsloth,
                 "train_file_stats": stats,
+                "token_audit": (
+                    token_audit_report.__dict__ if token_audit_report else None
+                ),
+                "vram_plan": {
+                    "max_seq": max_seq,
+                    "batch_size": batch_size,
+                    "grad_accum": grad_accum,
+                    "vram_ceiling": plan.vram_ceiling,
+                    "reason": vram_reason,
+                    "runtime_flags": flags,
+                },
             },
             indent=2,
         ),
         encoding="utf-8",
     )
-
-    import torch
-
-    free_gb, total_gb = (x / (1024**3) for x in torch.cuda.mem_get_info())
-    max_seq, batch_size, grad_accum, vram_reason = resolve_vram_train_params(
-        cfg,
-        smoke=args.smoke,
-        free_gb=free_gb,
-        total_gb=total_gb,
-        backend="unsloth",
-        unsloth=unsloth,
-    )
-    print(
-        f"VRAM budget: {vram_reason} → batch={batch_size} "
-        f"seq<={max_seq} grad_accum={grad_accum}",
-        file=sys.stderr,
-        flush=True,
-    )
     torch.cuda.empty_cache()
-
-    max_examples = 128 if args.smoke else None
-    raw_chars = cfg.get("max_chars_per_message")
-    char_cap = int(raw_chars) if raw_chars is not None else max_chars_for_seq(max_seq)
-    dataset, _sample_weights = load_messages_dataset(
-        train_path,
-        max_examples=max_examples,
-        max_chars_per_message=char_cap,
-    )
-    print(f"Dataset char cap per message: {char_cap}", flush=True)
-    print(f"Training examples (Unsloth will filter empty assistant @ truncate): {len(dataset)}")
 
     if args.lora_r:
         cfg = {**cfg, "lora_r": args.lora_r}
 
     model, tokenizer = load_unsloth_model(cfg, unsloth, max_seq)
+    ok_post, free_post = post_load_vram_ok(unsloth)
+    while not ok_post:
+        lower = downgrade_seq_for_post_load(
+            max_seq,
+            round_to=int(unsloth.get("token_audit_round_to", 256)),
+            floor=int(unsloth.get("token_audit_min_seq", 512)),
+        )
+        if lower is None:
+            raise RuntimeError(
+                f"VRAM headroom after model load: {free_post:.2f} GiB free "
+                f"(need {unsloth.get('step0_headroom_mib', 1200)} MiB). "
+                "Stop GPU apps (hyprwhspr/Ollama) or install flash-attn for packing."
+            )
+        print(
+            f"Post-load VRAM tight ({free_post:.2f} GiB free) — reload model @ seq {lower} "
+            f"(was {max_seq})",
+            flush=True,
+        )
+        del model, tokenizer
+        import torch
+
+        torch.cuda.empty_cache()
+        max_seq = lower
+        model, tokenizer = load_unsloth_model(cfg, unsloth, max_seq)
+        ok_post, free_post = post_load_vram_ok(unsloth)
+
+    dataset = prepare_unsloth_messages_dataset(
+        dataset,
+        tokenizer,
+        max_seq=max_seq,
+        num_proc=int(unsloth.get("dataset_num_proc", 1)),
+    )
+    print(f"Training examples after tokenize: {len(dataset)}", flush=True)
+
+    holdout = float(unsloth.get("eval_holdout_ratio", 0.05))
+    eval_ds = None
+    if holdout > 0 and not args.smoke:
+        stratify_col = "_data_source" if unsloth.get("stratified_eval_holdout", True) else None
+        dataset, eval_ds = split_train_eval_dataset(
+            dataset,
+            holdout_ratio=holdout,
+            seed=int(cfg["seed"]),
+            stratify_col=stratify_col,
+        )
+        print(f"Eval holdout: {len(eval_ds)} rows ({holdout:.0%})", flush=True)
+
+    flags = resolve_unsloth_runtime_flags(unsloth)
+    packed = False
+    dataset, packed = maybe_pack_unsloth_dataset(dataset, unsloth, max_seq)
+    use_weighted_sampler = not packed and not flags.get("use_padding_free")
 
     epochs = args.epochs if args.epochs is not None else cfg["num_epochs"]
     n = len(dataset)
     steps_per_epoch = max(1, n // (batch_size * grad_accum))
-    max_steps = args.max_steps
-    if max_steps is None:
-        max_steps = min(int(steps_per_epoch * epochs), cfg["max_steps_cap"])
-    if args.smoke:
-        max_steps = 5
+    max_steps = _resolve_max_steps(
+        args_max_steps=args.max_steps,
+        steps_per_epoch=steps_per_epoch,
+        epochs=epochs,
+        max_steps_cap=cfg.get("max_steps_cap"),
+        clamp_one_epoch=bool(unsloth.get("clamp_to_one_epoch", True)),
+        smoke=args.smoke,
+    )
 
     eff_batch = batch_size * grad_accum
     steps_note = (
         f"max_steps={max_steps} (effective_batch={eff_batch}, "
-        f"~{steps_per_epoch} steps/epoch, cap={cfg['max_steps_cap']})"
+        f"~{steps_per_epoch} steps/epoch, cap={cfg.get('max_steps_cap')})"
     )
+
+    eval_steps = None
+    if eval_ds is not None:
+        eval_steps = compute_eval_steps(unsloth, max_steps)
 
     sft_config = build_unsloth_sft_config(
         cfg=cfg,
@@ -296,16 +457,25 @@ def _run_train_unsloth(args, cfg: dict, unsloth: dict, train_path: Path, stats: 
         grad_accum=grad_accum,
         max_steps=max_steps,
         warmup_ratio=cfg["warmup_ratio"],
+        eval_steps=eval_steps,
+        has_eval=eval_ds is not None,
     )
 
     trainer = SFTTrainer(
         model=model,
         processing_class=tokenizer,
         train_dataset=dataset,
+        eval_dataset=eval_ds,
         args=sft_config,
     )
     trainer = apply_train_on_responses_only(trainer, unsloth)
-    _attach_weighted_sampler(trainer, cfg)
+    trainer = attach_unsloth_lora_plus(trainer, cfg, unsloth)
+    if use_weighted_sampler:
+        _attach_weighted_sampler(trainer, cfg)
+    elif packed:
+        print("Weighted sampler off (BFD-packed dataset)", flush=True)
+    elif flags.get("use_padding_free"):
+        print("Weighted sampler on (padding-free FA2 path)", flush=True)
 
     run_name = out_dir.name
     n_train = len(trainer.train_dataset)
@@ -318,6 +488,13 @@ def _run_train_unsloth(args, cfg: dict, unsloth: dict, train_path: Path, stats: 
 
     print(f"Training {n_train} examples, {steps_note}, output={out_dir}")
     torch.cuda.empty_cache()
+    from llm_core.gpu_mutex import reclaim_gpu_before_load
+
+    if not reclaim_gpu_before_load():
+        print(
+            "Warning: VRAM tight before train loop — close GPU apps or install flash-attn",
+            flush=True,
+        )
     try:
         trainer.train()
     except Exception:
@@ -346,6 +523,11 @@ def _run_train_unsloth(args, cfg: dict, unsloth: dict, train_path: Path, stats: 
             "max_steps": max_steps,
             "max_seq": max_seq,
             "effective_batch": eff_batch,
+            "packed": packed,
+            "padding_free": flags.get("use_padding_free", False),
+            "flash_attn": flags["flash_attn"],
+            "lora_plus": bool(unsloth.get("use_lora_plus", True)),
+            "token_audit_seq": token_rec,
         },
     )
 
@@ -429,16 +611,19 @@ def _run_train_chronicals(
     epochs = args.epochs if args.epochs is not None else cfg["num_epochs"]
     n = len(dataset)
     steps_per_epoch = max(1, n // (batch_size * grad_accum))
-    max_steps = args.max_steps
-    if max_steps is None:
-        max_steps = min(int(steps_per_epoch * epochs), cfg["max_steps_cap"])
-    if args.smoke:
-        max_steps = 5
+    max_steps = _resolve_max_steps(
+        args_max_steps=args.max_steps,
+        steps_per_epoch=steps_per_epoch,
+        epochs=epochs,
+        max_steps_cap=cfg.get("max_steps_cap"),
+        clamp_one_epoch=False,
+        smoke=args.smoke,
+    )
 
     eff_batch = batch_size * grad_accum
     steps_note = (
         f"max_steps={max_steps} (effective_batch={eff_batch}, "
-        f"~{steps_per_epoch} steps/epoch, cap={cfg['max_steps_cap']})"
+        f"~{steps_per_epoch} steps/epoch, cap={cfg.get('max_steps_cap')})"
     )
 
     sft_config = build_sft_config(

@@ -5,9 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import yaml
-
-from llm_core import config_dir
+from llm_core.yaml_config import load_yaml_config
 
 
 @dataclass(frozen=True)
@@ -17,6 +15,8 @@ class MixPolicy:
     public_cap: int | None = None
     public_dataset_priority: tuple[str, ...] = (
         "swe_chat",
+        "swe_zero_openhands",
+        "swe_zero_12m",
         "ultradata_sft_2605",
         "coderforge_preview",
         "swe_next",
@@ -32,11 +32,7 @@ class MixPolicy:
 
 
 def load_mix_policy() -> MixPolicy:
-    path = config_dir() / "default.yaml"
-    if not path.is_file():
-        return MixPolicy()
-    with path.open(encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh) or {}
+    doc = load_yaml_config()
     raw = doc.get("training_mix") or {}
     pr = float(raw.get("personal_ratio", doc.get("data", {}).get("personal_ratio_mature", 0.80)))
     cap = raw.get("public_cap")

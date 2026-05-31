@@ -5,10 +5,12 @@ from llm_core.paths import (
     config_dir,
     data_dir,
     eval_dir,
+    hf_cache_dir,
     repo_root,
     runs_dir,
     warehouse_db,
 )
+from llm_core.yaml_config import load_yaml_config, profile_path
 from llm_core.warehouse import (
     connect as warehouse_connect,
     fix_data_sources as warehouse_fix_data_sources,
@@ -20,6 +22,9 @@ __all__ = [
     "config_dir",
     "data_dir",
     "eval_dir",
+    "hf_cache_dir",
+    "load_yaml_config",
+    "profile_path",
     "repo_root",
     "runs_dir",
     "warehouse_db",

@@ -5,19 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-from llm_core import config_dir, data_dir, repo_root, runs_dir
-
-
-def load_yaml_config() -> dict[str, Any]:
-    path = config_dir() / "default.yaml"
-    if not path.is_file():
-        return {}
-    with path.open(encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}
-
-
+from llm_core.yaml_config import load_yaml_config
 def _merge_profile(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
     if not overrides:
         return base
@@ -64,12 +52,63 @@ def unsloth_settings(*, promote: bool = False, decensor: bool = False) -> dict[s
         "use_rslora": bool(u.get("use_rslora", True)),
         "disable_torch_compile": bool(u.get("disable_torch_compile", True)),
         "packing": bool(u.get("packing", False)),
+        "packing_strategy": str(u.get("packing_strategy", "bfd")),
+        "auto_pack_with_fa2": bool(u.get("auto_pack_with_fa2", True)),
+        "auto_padding_free": bool(u.get("auto_padding_free", True)),
+        "padding_free": bool(u.get("padding_free", False)),
+        "disable_auto_padding_free": bool(u.get("disable_auto_padding_free", True)),
+        "pack_by_data_source": bool(u.get("pack_by_data_source", True)),
+        "pack_stratify_column": str(u.get("pack_stratify_column", "_data_source")),
+        "stratified_eval_holdout": bool(u.get("stratified_eval_holdout", True)),
+        "use_lora_plus": bool(u.get("use_lora_plus", True)),
+        "lora_plus_lr_ratio": float(u.get("lora_plus_lr_ratio", 16.0)),
+        "activation_offloading": bool(u.get("activation_offloading", False)),
+        "allow_activation_offload_without_fa": bool(
+            u.get("allow_activation_offload_without_fa", False)
+        ),
+        "use_liger_kernel": bool(u.get("use_liger_kernel", False)),
+        "unsloth_tiled_mlp": bool(u.get("unsloth_tiled_mlp", False)),
+        "tiled_mlp_min_seq": int(u.get("tiled_mlp_min_seq", 1536)),
+        "dataloader_num_workers": int(u.get("dataloader_num_workers", 0)),
+        "dataloader_pin_memory": bool(u.get("dataloader_pin_memory", True)),
+        "dataloader_prefetch_factor": u.get("dataloader_prefetch_factor"),
+        "eval_step_divisor": int(u.get("eval_step_divisor", 6)),
+        "vram_probe_max_seq": int(u.get("vram_probe_max_seq", 2048)),
+        "token_audit_headroom_ratio": float(u.get("token_audit_headroom_ratio", 1.05)),
         "optim": str(u.get("optim", "adamw_8bit")),
         "max_grad_norm": float(u.get("max_grad_norm", 1.0)),
         "lr_scheduler_type": str(u.get("lr_scheduler_type", "linear")),
         "dataset_num_proc": int(u.get("dataset_num_proc", 1)),
         "use_train_on_responses_only": bool(u.get("use_train_on_responses_only", False)),
         "max_seq_12gb_cap": int(u.get("max_seq_12gb_cap", 2048)),
+        "max_seq_12gb_no_fa": int(u.get("max_seq_12gb_no_fa", 768)),
+        "max_seq_12gb_no_fa_r16": int(u.get("max_seq_12gb_no_fa_r16", 1024)),
+        "max_seq_12gb_no_fa_r32": int(u.get("max_seq_12gb_no_fa_r32", 768)),
+        "max_seq_12gb_no_fa_r32_reclaimed": int(
+            u.get("max_seq_12gb_no_fa_r32_reclaimed", 1024)
+        ),
+        "no_fa_stretch_min_free_gb": float(u.get("no_fa_stretch_min_free_gb", 10.8)),
+        "max_seq_12gb_no_fa_r64": int(u.get("max_seq_12gb_no_fa_r64", 512)),
+        "max_seq_12gb_with_fa": int(u.get("max_seq_12gb_with_fa", 2048)),
+        "max_seq_12gb_with_fa_r16": int(u.get("max_seq_12gb_with_fa_r16", 2048)),
+        "max_seq_12gb_with_fa_r32": int(u.get("max_seq_12gb_with_fa_r32", 2048)),
+        "max_seq_12gb_with_fa_r64": int(u.get("max_seq_12gb_with_fa_r64", 1536)),
+        "max_seq_tight_vram": int(u.get("max_seq_tight_vram", 768)),
+        "max_seq_moderate_vram": int(u.get("max_seq_moderate_vram", 1024)),
+        "max_seq_tight_vram_fa": int(u.get("max_seq_tight_vram_fa", 1536)),
+        "max_seq_moderate_vram_fa": int(u.get("max_seq_moderate_vram_fa", 2048)),
+        "vram_probe_batch_size": int(u.get("vram_probe_batch_size", 2)),
+        "effective_batch_target": int(u.get("effective_batch_target", 16)),
+        "token_audit": bool(u.get("token_audit", True)),
+        "token_audit_percentile": float(u.get("token_audit_percentile", 95)),
+        "token_audit_round_to": int(u.get("token_audit_round_to", 256)),
+        "token_audit_min_seq": int(u.get("token_audit_min_seq", 512)),
+        "clamp_to_one_epoch": bool(u.get("clamp_to_one_epoch", True)),
+        "eval_holdout_ratio": float(u.get("eval_holdout_ratio", 0.05)),
+        "eval_steps": int(u.get("eval_steps", 50)),
+        "load_best_model_at_end": bool(u.get("load_best_model_at_end", True)),
+        "step0_headroom_mib": int(u.get("step0_headroom_mib", 1200)),
+        "loss_type": u.get("loss_type"),
         "target_modules": u.get("target_modules", "all-linear"),
         "chat_markers": u.get("chat_markers"),
     }
@@ -98,7 +137,7 @@ def train_settings(*, promote: bool = False, decensor: bool = False) -> dict[str
             train.get("gradient_accumulation_steps", 8)
         ),
         "num_epochs": float(train.get("num_epochs", 1)),
-        "max_steps_cap": int(train.get("max_steps_cap", 150)),
+        "max_steps_cap": train.get("max_steps_cap", 150),
         "warmup_ratio": float(train.get("warmup_ratio", 0.05)),
         "weight_decay": float(train.get("weight_decay", 0.0)),
         "neftune_noise_alpha": train.get("neftune_noise_alpha"),

@@ -19,6 +19,7 @@ from typing import Any, TextIO
 import yaml
 
 from llm_core.paths import config_dir
+from llm_core.yaml_config import load_yaml_config
 
 HYPRWSPR_UNIT = "hyprwhspr.service"
 HYPRWSPR_GPU_MIN_FREE_MIB = 8_000
@@ -28,6 +29,16 @@ HYPRWSPR_BLOCK_DROPIN = (
 
 DEFAULT_KILL_SUBSTRINGS = [
     "hyprwhspr",
+    "helium-browser",
+    "chrome --type=gpu-process",
+    "chrome --type=renderer",
+    "google-chrome",
+    "chromium",
+    "brave-browser",
+    "firefox",
+    "librewolf",
+    "msedge",
+    "zen",
     "ollama",
     "llama-server",
     "llama.cpp",
@@ -77,11 +88,7 @@ def _log(msg: str, *, stream: TextIO = sys.stderr) -> None:
 
 
 def load_gpu_mutex_settings() -> dict[str, Any]:
-    path = config_dir() / "default.yaml"
-    doc: dict[str, Any] = {}
-    if path.is_file():
-        with path.open(encoding="utf-8") as fh:
-            doc = yaml.safe_load(fh) or {}
+    doc = load_yaml_config()
     g = doc.get("gpu_mutex") or {}
     return {
         "enabled": bool(g.get("enabled", True)),

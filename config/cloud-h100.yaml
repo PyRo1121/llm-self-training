@@ -1,0 +1,74 @@
+# H100 80GB cloud profile — LLM_CONFIG_PROFILE=cloud-h100 (see docs/oss/CLOUD-TRAIN.md)
+# Jarvis IN2: 24 vCPU, 200GB RAM, multi-TB SSD. Use with: train-qlora --cloud
+
+train:
+  promote:
+    max_seq_length: 8192
+    max_seq_length_12gb_cap: 8192
+    max_chars_per_message: 24576
+    lora_r: 64
+    lora_alpha: 128
+    lora_dropout: 0.0
+    learning_rate: 1.5e-4
+    per_device_train_batch_size: 8
+    gradient_accumulation_steps: 2
+    num_epochs: 1
+    max_steps_cap: null
+    warmup_ratio: 0.08
+    weight_decay: 0.01
+
+unsloth:
+  disable_auto_padding_free: false
+  auto_padding_free: true
+  auto_pack_with_fa2: false
+  packing: false
+  activation_offloading: false
+  unsloth_tiled_mlp: false
+  token_audit_percentile: 95
+  token_audit_round_to: 512
+  token_audit_min_seq: 1024
+  effective_batch_target: 16
+  max_seq_12gb_cap: 8192
+  max_seq_h100_cap: 8192
+  max_seq_h100_with_fa_r64: 8192
+  max_seq_h100_with_fa_r32: 8192
+  max_seq_h100_with_fa_r16: 8192
+  vram_probe_batch_size: 8
+  vram_probe_max_seq: 8192
+  step0_headroom_mib: 800
+  eval_holdout_ratio: 0.10
+  eval_steps: 64
+  eval_step_divisor: 8
+  promote:
+    dataset_num_proc: 16
+    dataloader_num_workers: 8
+    dataloader_prefetch_factor: 4
+
+gpu_mutex:
+  enabled: false
+
+training_mix:
+  personal_ratio: 0.75
+  public_cap: null
+
+public_datasets:
+  ingest:
+    download_workers: 20
+    convert_workers: 12
+    write_buffer_rows: 1000
+  datasets:
+    swe_zero_12m:
+      enabled: true
+      max_rows: null
+    swe_zero_openhands:
+      enabled: true
+      max_rows: null
+    codex_7m:
+      enabled: true
+      max_rows: null
+    codex_2m_thinking:
+      enabled: true
+      max_rows: null
+    agent_trove:
+      enabled: true
+      max_rows: null

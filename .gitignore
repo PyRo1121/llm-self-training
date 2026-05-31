@@ -1,32 +1,99 @@
-# Python / uv
+# =============================================================================
+# LLM Self Training — gitignore
+# Policy: never commit training data, weights, secrets, or local operator state.
+# See docs/oss/OSS-RELEASE.md
+# =============================================================================
+
+# --- Python / uv ---
 .venv/
+venv/
 __pycache__/
 *.py[cod]
+*$py.class
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 dist/
+build/
 *.egg-info/
+*.egg
+uv.lock.bak
 
-# Data volumes (PLAN.md)
+# --- Data lake & artifacts (gitignored by design) ---
 data/
+!data/cloud/
+data/cloud/*
+!data/cloud/README.md
+!data/cloud/personal/
+data/cloud/personal/*
+!data/cloud/personal/.gitkeep
+!data/cloud/personal/personal-tier1.jsonl
 adapters/
 exports/
 runs/
+wandb/
+mlruns/
+logs/
+*.log
 
-# Env
+# --- Model weights & large binaries (local train/export only) ---
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.msgpack
+
+# --- HF / torch / Unsloth caches (if HF_HOME or cwd set locally) ---
+.cache/
+huggingface/
+unsloth_compiled_cache/
+torchinductor/
+triton/
+*.npy
+*.npz
+
+# --- Secrets & credentials ---
 .env
 .env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials.json
+secrets.yaml
+secrets.yml
+**/HF_TOKEN
+.aws/
 
-# IDE
+# --- Turso / libSQL local ---
+.turso/
+
+# --- IDE / editor ---
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 
-# Dashboard (Bun — Phase 1.5)
+# Cursor — keep rules; ignore local MCP secrets
+.cursor/mcp.json
+
+# --- Dashboard (Bun) ---
 apps/dashboard/node_modules/
 apps/dashboard/dist/
 
-# Legacy / generated train artifacts
-unsloth_compiled_cache/
+# --- Safety audit previews (may contain PII snippets) ---
+docs/audits/*.jsonl
 
-# OS
+# --- OS ---
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Optional local agent state (not part of repo) ---
+.claude/
