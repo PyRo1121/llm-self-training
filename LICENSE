@@ -1,0 +1,107 @@
+LLM Self Training — Source Available License v1.0
+Copyright (c) 2026 Olen Latham. All rights reserved.
+
+This repository is published for transparency and personal use. It is NOT
+licensed under a permissive open-source license (MIT, Apache-2.0, etc.).
+
+================================================================================
+1. DEFINITIONS
+================================================================================
+
+"Software" means this repository and all source code, documentation, config,
+and other files included in it, excluding third-party dependencies governed by
+their own licenses.
+
+"You" means any individual or legal entity accessing or using the Software.
+
+"Commercial purpose" means any use intended for or directed toward commercial
+advantage or monetary compensation, including but not limited to: selling,
+licensing, sublicensing, offering as a hosted service (SaaS), bundling with
+paid products, using in client work billed to third parties, or training
+commercial models for redistribution.
+
+================================================================================
+2. GRANT — LIMITED USE
+================================================================================
+
+Subject to the restrictions below, You may:
+
+  (a) View and clone the Software from its public repository;
+  (b) Run the Software on Your own hardware for personal, educational, or
+      non-commercial research purposes;
+  (c) Cite or link to the Software in academic or non-commercial writing.
+
+================================================================================
+3. RESTRICTIONS — YOU MAY NOT
+================================================================================
+
+Without prior written permission from the copyright holder, You may NOT:
+
+  (a) Use the Software for any Commercial purpose;
+  (b) Modify, adapt, translate, or create derivative works based on the
+      Software;
+  (c) Fork, mirror, or redistribute the Software (modified or unmodified)
+      except as incidental to cloning from the official repository for
+      personal non-commercial use under section 2;
+  (d) Remove, alter, or obscure copyright, license, or attribution notices;
+  (e) Sublicense, sell, rent, lease, or otherwise transfer rights in the
+      Software;
+  (f) Use the Software, or any output trained with it, to compete with or
+      replace a commercial offering derived from this project without a
+      separate commercial license.
+
+Bug reports, security disclosures, and documentation corrections sent to the
+maintainer do not constitute "derivative works" for purposes of (b), but pull
+requests may only be merged at the maintainer's discretion (see CONTRIBUTING.md).
+
+================================================================================
+4. COMMERCIAL LICENSING
+================================================================================
+
+Commercial use, modification rights, or redistribution require a separate
+written license. Contact:
+
+  Olen Latham <olen@latham.cloud>
+  https://github.com/PyRo1121/llm-self-training
+
+================================================================================
+5. THIRD-PARTY COMPONENTS
+================================================================================
+
+Dependencies (Python packages, models, datasets) remain under their respective
+licenses. You are responsible for complying with those licenses when installing
+or running the Software.
+
+================================================================================
+6. NO TRADEMARK GRANT
+================================================================================
+
+This license does not grant permission to use the project name, logos, or
+branding in a way that suggests endorsement or affiliation.
+
+================================================================================
+7. DISCLAIMER
+================================================================================
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+8. TERMINATION
+================================================================================
+
+Your rights under this license terminate automatically if You violate any
+term. Upon termination, You must cease all use and destroy copies in Your
+possession.
+
+================================================================================
+9. GOVERNING LAW
+================================================================================
+
+This license is governed by the laws applicable in the copyright holder's
+jurisdiction, without regard to conflict-of-law principles.

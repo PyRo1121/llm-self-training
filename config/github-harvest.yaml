@@ -1,0 +1,65 @@
+# GitHub public code search → agent session files (true-data supplement).
+# Dual auth (optional): set GITHUB_APP_* in .env — see .env.example
+#   uv run --package llm-dataprep github-harvest --list-app-installations
+#   uv run --package llm-dataprep github-harvest --resolve-app-installation USER
+#   make github-harvest               # PAT + App lane when app env complete
+#
+# Queries: packages/dataprep/src/llm_dataprep/github_harvest_registry.py
+# Each query uses GitHub path regex + post-hit path regex + content sniff.
+#
+# Run: make github-harvest-dry  →  make github-harvest
+# List: uv run --package llm-dataprep github-harvest --list-queries
+
+github_harvest:
+  max_file_bytes: 5242880
+  max_files_per_run: 220
+  max_lines_per_file: 50000
+  default_max_pages: 5
+  code_search_min_interval_s: 7.0
+  download_min_interval_s: 0.05
+  state_path: data/github_harvest/state.json
+  raw_prefix: public-github-sessions
+
+  # Use built-in harness registry (Cursor, Pi, OpenCode, Claude Code, …)
+  queries: registry
+
+  # Daily rotation — run ~9 tier-A queries per day (see docs/oss/PUBLIC-DATASETS.md)
+  # enabled_queries: [cursor_agent_transcripts, pi_agent_sessions, codex_rollout_sessions]
+  # disabled_queries: [aider_chat_history, trae_tokscale]
+
+  exclude_path_substrings:
+    - node_modules/
+    - /vendor/
+    - /dist/
+    - /build/
+    - .min.js
+    - /test/fixtures/
+    - __pycache__
+    - /jobs/
+    - harbor/
+    - pochi-harbor
+    - terminal_bench
+    - swe-bench
+    - /benchmark/
+    - /evals/
+    - /eval/
+    - /fixtures/
+    - subagents/
+    - /.github/workflows/
+
+  exclude_repo_prefixes: []
+
+  # Rate-limit hygiene (PAT required — set GITHUB_TOKEN in .env)
+  rate_limit:
+    search_min_interval_s: 7.0      # code search ~9 req/min authenticated
+    download_min_interval_s: 0.05   # gentle on REST budget
+    max_retries: 5                  # exponential backoff on 403/429/502/503
+    low_remaining_threshold: 100    # core REST bucket only (5000/hr)
+    code_search_low_remaining_threshold: 1  # search bucket (~10/min)
+    use_raw_cdn: true               # raw.githubusercontent.com before Contents API
+    download_mode: hybrid           # hybrid | graphql | rest
+    graphql_pending_flush: 16       # pending hits before batch download
+    graphql_files_per_repo: 8       # blobs per repo in one GraphQL query (max ~24)
+    graphql_max_repos: 3            # repos per GraphQL query
+    # legacy alias (maps to graphql_pending_flush if set alone):
+    # graphql_batch_size: 16

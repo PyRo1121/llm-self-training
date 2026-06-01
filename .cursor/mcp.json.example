@@ -1,15 +1,20 @@
 {
   "mcpServers": {
-    "context7": {
-      "url": "https://mcp.context7.com/mcp",
-      "headers": {
-        "CONTEXT7_API_KEY": "ctx7sk-YOUR_KEY"
-      }
+    "_comment": "Copy entries to ~/.cursor/mcp.json — never commit secrets",
+    "mobus": {
+      "_comment": "Dataset search across 20+ platforms — https://github.com/mobus-ai/Mobus",
+      "url": "https://mcp.mobus.ai/mcp"
     },
-    "exa": {
-      "url": "https://mcp.exa.ai/mcp",
-      "headers": {
-        "x-api-key": "YOUR_EXA_KEY"
+    "mobus-local": {
+      "_comment": "Optional self-host; clone Mobus, npm install && npm run build, then use dist/main.js",
+      "command": "node",
+      "args": ["/absolute/path/to/Mobus/dist/main.js"],
+      "env": {
+        "HF_TOKEN": "",
+        "KAGGLE_USERNAME": "",
+        "KAGGLE_KEY": "",
+        "GOOGLE_API_KEY": "",
+        "GOOGLE_CSE_ID": ""
       }
     }
   }

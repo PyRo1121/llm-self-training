@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Iterator
+
+logger = logging.getLogger(__name__)
 
 from llm_dataprep.public.records import (
     _message_text,
@@ -160,8 +163,15 @@ def _stream_dataset(
             if token:
                 kwargs["token"] = token
             return load_dataset(**kwargs)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error(
+                "Failed to load local HF cache at %s (split=%s, config=%s): %s",
+                root,
+                split,
+                config,
+                exc,
+            )
+            raise
 
     kwargs: dict[str, Any] = {"split": split, "streaming": use_streaming}
     if data_files:
@@ -375,7 +385,24 @@ def load_swe_chat(
         )
     ds = _stream_dataset(hf_repo, data_files="conversations.parquet", token=token)
     emitted = 0
-    by_session: dict[str, list[dict[str, Any]]] = {}
+    current_sid: str | None = None
+    turns: list[dict[str, Any]] = []
+
+    def _emit_session(sid: str, session_turns: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+        if not session_turns:
+            return
+        session_turns.sort(key=lambda t: t.get("turn", 0))
+        messages = [{"role": t["role"], "content": t["content"]} for t in session_turns]
+        yield from iter_messages_records(
+            dataset_id="swe_chat",
+            session_id=sid,
+            messages=messages,
+            hf_repo=hf_repo,
+            map_tool_to_user=False,
+            verify="swe_chat_wild",
+            extra={"public_release": "2026-04"},
+        )
+
     for row in ds:
         if max_rows is not None and emitted >= max_rows:
             break
@@ -399,23 +426,18 @@ def load_swe_chat(
             prefix = "[tool_result]\n"
         elif role not in ("user", "assistant"):
             continue
-        by_session.setdefault(sid, []).append(
+        if sid != current_sid:
+            if current_sid is not None:
+                yield from _emit_session(current_sid, turns)
+            current_sid = sid
+            turns = []
+        turns.append(
             {"role": out_role, "content": prefix + content, "turn": row.get("turn_number", 0)}
         )
         emitted += 1
 
-    for sid, turns in by_session.items():
-        turns.sort(key=lambda t: t.get("turn", 0))
-        messages = [{"role": t["role"], "content": t["content"]} for t in turns]
-        yield from iter_messages_records(
-            dataset_id="swe_chat",
-            session_id=sid,
-            messages=messages,
-            hf_repo=hf_repo,
-            map_tool_to_user=False,
-            verify="swe_chat_wild",
-            extra={"public_release": "2026-04"},
-        )
+    if current_sid is not None:
+        yield from _emit_session(current_sid, turns)
 
 
 def _append_tool_calls(content: str, tool_calls: Any) -> str:

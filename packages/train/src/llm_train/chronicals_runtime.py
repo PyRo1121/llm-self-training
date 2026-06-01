@@ -179,7 +179,7 @@ def load_qlora_model(
     """Load 4-bit base model + LoRA config. PEFT wrap happens inside SFTTrainer."""
     import torch
     from peft import LoraConfig, prepare_model_for_kbit_training
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from transformers import AutoModelForCausalLM, BitsAndBytesConfig
 
     from llm_core.gpu_mutex import load_gpu_mutex_settings, reclaim_gpu_before_load
 
@@ -374,28 +374,39 @@ def build_sft_config(
 
 def create_lora_plus_optimizer(model, cfg: dict[str, Any], chronicals: dict[str, Any]):
     """LoRA+ optimizer from Chronicals (B matrices get higher LR)."""
-    import torch
-
     c = _4070_ti_defaults(chronicals)
     if not c.get("use_lora_plus", True):
         return None
 
-    from chronicals.optimizers.lora_plus_optimizer import create_lora_plus_optimizer
+    try:
+        from chronicals.optimizers.lora_plus_optimizer import (
+            create_lora_plus_optimizer as _chronicals_lora_plus,
+        )
 
-    ratio = float(c.get("lora_plus_lr_ratio", 16.0))
-    optim_cls = torch.optim.AdamW
-    if c.get("use_8bit_optimizer"):
-        try:
-            from bitsandbytes.optim import AdamW8bit
+        import torch
 
-            optim_cls = AdamW8bit
-        except ImportError:
-            pass
+        ratio = float(c.get("lora_plus_lr_ratio", 16.0))
+        optim_cls = torch.optim.AdamW
+        if c.get("use_8bit_optimizer"):
+            try:
+                from bitsandbytes.optim import AdamW8bit
 
-    return create_lora_plus_optimizer(
-        model,
-        base_lr=float(cfg["learning_rate"]),
-        lr_ratio=ratio,
-        betas=(0.9, 0.95),
-        optimizer_class=optim_cls,
-    )
+                optim_cls = AdamW8bit
+            except ImportError:
+                pass
+        return _chronicals_lora_plus(
+            model,
+            base_lr=float(cfg["learning_rate"]),
+            lr_ratio=ratio,
+            betas=(0.9, 0.95),
+            optimizer_class=optim_cls,
+        )
+    except ImportError:
+        from llm_train.lora_plus import create_lora_plus_optimizer as _fallback
+
+        return _fallback(
+            model,
+            cfg,
+            lr_ratio=float(c.get("lora_plus_lr_ratio", 16.0)),
+            use_8bit=bool(c.get("use_8bit_optimizer", True)),
+        )

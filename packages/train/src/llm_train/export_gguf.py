@@ -8,27 +8,24 @@ import subprocess
 import sys
 from pathlib import Path
 
-from llm_train.config import exports_dir, train_settings, unsloth_settings
+from llm_train.config import exports_dir, train_settings
 
 
 def _export_unsloth_gguf(adapter_dir: Path, out: Path, quant: str) -> None:
     from unsloth import FastLanguageModel
 
-    from llm_train.unsloth_runtime import ensure_unsloth_imported, resolve_unsloth_model_id
+    from llm_train.unsloth_runtime import ensure_unsloth_imported
 
     ensure_unsloth_imported()
-    cfg = train_settings()
-    unsloth = unsloth_settings()
-    model_id = resolve_unsloth_model_id(cfg, unsloth)
-
-    print(f"Loading base {model_id} + adapter {adapter_dir} for GGUF export…", flush=True)
+    adapter_dir = adapter_dir.resolve()
+    print(f"Loading adapter {adapter_dir} for GGUF export…", flush=True)
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_id,
+        model_name=str(adapter_dir),
         max_seq_length=2048,
         load_in_4bit=True,
         dtype=None,
+        device_map={"": 0},
     )
-    model.load_adapter(str(adapter_dir))
     out.mkdir(parents=True, exist_ok=True)
     gguf_dir = out / "gguf"
     gguf_dir.mkdir(parents=True, exist_ok=True)

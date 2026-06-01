@@ -86,11 +86,16 @@ def main() -> None:
     parser.add_argument("--raw-dir", type=Path, default=None)
     parser.add_argument("--curated", type=Path, default=None)
     parser.add_argument("--latest-curated", action="store_true")
+    parser.add_argument(
+        "--skip-raw",
+        action="store_true",
+        help="Do not scan data/raw (fast; use after large public ingests)",
+    )
     args = parser.parse_args()
 
     out: dict[str, Any] = {}
     raw_dir = args.raw_dir or (data_dir() / "raw")
-    if raw_dir.is_dir():
+    if raw_dir.is_dir() and not args.skip_raw:
         out["raw"] = stats_raw(raw_dir)
 
     curated = args.curated

@@ -1,0 +1,38 @@
+{
+  "model": "qwen2.5-coder:7b",
+  "ollama_host": "http://127.0.0.1:11434",
+  "strict": true,
+  "evaluated_at": "2026-06-01T00:25:54.658522+00:00",
+  "suites": [
+    {
+      "suite": "diff_apply",
+      "verdict": "fail",
+      "reason": "placeholder_tasks_only",
+      "tasks": 1,
+      "passed": 0
+    },
+    {
+      "suite": "style",
+      "verdict": "fail",
+      "reason": "placeholder_tasks_only",
+      "tasks": 1,
+      "passed": 0
+    },
+    {
+      "suite": "debug",
+      "verdict": "fail",
+      "reason": "placeholder_tasks_only",
+      "tasks": 1,
+      "passed": 0
+    },
+    {
+      "suite": "retrieval_gold",
+      "verdict": "fail",
+      "reason": "placeholder_tasks_only",
+      "tasks": 1,
+      "passed": 0
+    }
+  ],
+  "verdict": "fail",
+  "train_run": null
+}

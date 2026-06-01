@@ -7,8 +7,42 @@ from pathlib import Path
 from typing import Any
 
 
+def _failure_row_max_severity(row: dict[str, Any]) -> str | None:
+    """Normalized max severity ('block' | 'warn') or None when absent/unknown."""
+    raw = row.get("max_severity")
+    if raw is not None:
+        return str(raw).lower()
+
+    safety = row.get("safety")
+    if not isinstance(safety, dict):
+        return None
+
+    severities: list[str] = []
+    for finding in safety.get("findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        sev = finding.get("severity")
+        if sev is not None:
+            severities.append(str(sev).lower())
+    if not severities:
+        return None
+    return "block" if "block" in severities else "warn"
+
+
+def _should_quarantine_failure_row(row: dict[str, Any]) -> bool:
+    """Quarantine block rows; fail-closed when severity is missing."""
+    sev = _failure_row_max_severity(row)
+    if sev is None:
+        return True
+    return sev == "block"
+
+
 def load_safety_failure_keys(raw_dir: Path) -> set[tuple[str, int]]:
-    """Keys are (resolved source_file path, 1-based line_no) from safety-failures-*.jsonl."""
+    """Keys are (resolved source_file path, 1-based line_no) from safety-failures-*.jsonl.
+
+    Only rows with max_severity block (or missing severity) are included; warn-only rows
+    are ignored so curate can honor scan-raw severity without dropping warn-only sessions.
+    """
     keys: set[tuple[str, int]] = set()
     if not raw_dir.is_dir():
         return keys
@@ -23,6 +57,8 @@ def load_safety_failure_keys(raw_dir: Path) -> set[tuple[str, int]]:
                 except json.JSONDecodeError:
                     continue
                 if not isinstance(row, dict):
+                    continue
+                if not _should_quarantine_failure_row(row):
                     continue
                 src = row.get("source_file")
                 line_no = row.get("line_no")

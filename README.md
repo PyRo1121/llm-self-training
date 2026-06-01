@@ -1,27 +1,51 @@
 # LLM Self Training
 
-Local, private coding copilot: **RAG + Chronicals QLoRA + eval-gated loop + dashboard** on RTX 4070 Ti (12 GB), bare metal only.
+Local, private coding copilot: **RAG + QLoRA + eval-gated loop + dashboard** on RTX 4070 Ti (12 GB), bare metal only.
 
-| Doc | Purpose |
-|-----|---------|
-| **[PLAN.md](PLAN.md)** | Architecture, stack, schemas, training/eval spec |
-| **[ROADMAP.md](ROADMAP.md)** | Phases, checklists, Linear order, exit criteria |
-| **[docs/TURSO.md](docs/TURSO.md)** | Turso warehouse — doc-driven implementation (Phase 1.5) |
+**License:** [Source Available License v1.0](LICENSE) — personal/non-commercial use; no commercial use, public forks, or derivatives without permission. [CONTRIBUTING.md](CONTRIBUTING.md)
 
-**Python:** [uv](https://docs.astral.sh/uv/) workspace — `uv sync --group dev`, `uv run --package llm-api llm-api`
+## Documentation
 
-**Ingest (local agents):** `uv sync --package llm-dataprep --extra git` → `agent-ingest --list-harnesses` → `agent-ingest`. Full catalog: `packages/dataprep/AGENT_HARNESSES.md` (Windsurf `.pb` not decryptable; `state.vscdb` partial only).
+**Start here:** **[docs/oss/README.md](docs/oss/README.md)**
 
-**Safety scan (Phase 1):** `uv run --package llm-dataprep scan-raw` — regex + gitleaks (if installed) + Presidio (if `uv sync --extra safety`). See `docs/PHASE1-FILTERS.md`.
+| Audience | Document |
+|----------|----------|
+| Operators | [USER-GUIDE.md](docs/oss/USER-GUIDE.md) |
+| Product / evaluators | [PRODUCT.md](docs/oss/PRODUCT.md) |
+| Contributors | [ARCHITECTURE.md](docs/oss/ARCHITECTURE.md) |
 
-**Curate (Phase 1):** `uv run --package llm-dataprep curate-raw` — group by session, chunk long threads, tier-1 gate (`tier1.py`, bootstrap exec/verify).
+Day-to-day commands: **`make help`** (see [Makefile](Makefile)).
 
-**Phase 1 (all steps):** `uv run --package llm-dataprep phase1 --fresh-raw --include-subagents --repo /path/to/git/repo` — see [`docs/PHASE1-RUNBOOK.md`](docs/PHASE1-RUNBOOK.md).
+## Quick start
 
-**Public HF data:** `uv run --package llm-dataprep public-ingest` — SWE-Next, OpenCode broad, Nemotron, etc. See [`docs/PUBLIC-DATASETS.md`](docs/PUBLIC-DATASETS.md). Add `--public` to `phase1` to ingest before personal logs.
+```bash
+cd "/path/to/llm-self-training"
+make sync-all
 
-**Phase 2 train:** [`docs/PHASE2-TRAIN.md`](docs/PHASE2-TRAIN.md) — `uv sync --package llm-train` → `train-qlora` (personal-first JSONL + sample weights).
+# 1) All data prep (personal + public HF → train JSONL). HF_TOKEN in .env
+make prep
 
-**Bulk ingest tip:** `scan-raw` defaults gitleaks off; use `--gitleaks --gitleaks-per-file` when the CLI is installed.
+# 2) Local GPU train (4070 Ti)
+make train
 
-**Linear:** filter `[LLM-ST]` on team COM — [COM-91](https://linear.app/competitor-intel/issue/COM-91) Phase 0 next (scaffold done).
+# Or rent H100 on Vast.ai (HF_TOKEN + VAST_API_KEY in .env)
+make train-cloud
+```
+
+Optional: `make prep REPO=/path/to/git/repo` · `make prep-bg` (background) · `make train-smoke`
+
+## Repository layout
+
+| Path | Role |
+|------|------|
+| `Makefile` | Operator shortcuts |
+| `config/default.yaml` | Train, ingest, warehouse, RAG settings |
+| `packages/*` | Python workspace (core, dataprep, train, eval, rag) |
+| `apps/api`, `apps/dashboard` | Control plane + UI |
+| `docs/oss/` | **Canonical documentation** |
+| `docs/archive/` | Historical PLAN + ROADMAP (superseded by docs/oss) |
+| `AGENTS.md` | Cursor agent + audit tool requirements |
+
+## Agents & audits
+
+Contributors and Cursor agents: read **[AGENTS.md](AGENTS.md)** and **[docs/AUDIT-PROTOCOL.md](docs/AUDIT-PROTOCOL.md)** before claiming PASS or promote.

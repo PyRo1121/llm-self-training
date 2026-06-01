@@ -1,0 +1,13 @@
+{
+  "id": "sess-fixture",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [{"type": "text", "text": "Explain the github harvest registry."}]
+    },
+    {
+      "info": {"role": "assistant"},
+      "parts": [{"type": "text", "text": "It lists code-search queries per harness."}]
+    }
+  ]
+}

@@ -11,10 +11,45 @@ from pathlib import Path
 
 from llm_core import data_dir, repo_root
 
+from llm_dataprep.perf import worker_count
+from llm_dataprep.safety_policy import load_safety_policy, safety_policy_version
+
 
 def _run(cmd: list[str], *, cwd: Path) -> None:
     print(f"\n→ {' '.join(cmd)}")
     subprocess.run(cmd, cwd=cwd, check=True)
+
+
+def _worker_args() -> tuple[int, int]:
+    scan = worker_count("SCAN_WORKERS")
+    curate = worker_count("CURATE_WORKERS")
+    return scan, curate
+
+
+def _print_safety_policy(
+    *,
+    use_gitleaks: bool,
+    gitleaks_per_file: bool,
+    use_presidio: bool,
+    honor_safety_failures: bool,
+) -> None:
+    pol = load_safety_policy()
+    print("\nSafety policy (config/default.yaml + safety-allowlist.yaml):")
+    print(f"  version={safety_policy_version()}")
+    print(f"  quarantine_severity={pol.quarantine_severity.value}")
+    print(
+        f"  scan: gitleaks={'on' if use_gitleaks else 'off'}"
+        f" severity={pol.gitleaks_severity.value} per_file={gitleaks_per_file}"
+    )
+    print(
+        f"  presidio={'on' if use_presidio else 'off'}"
+        f" block_entities={len(pol.presidio_block_entities)}"
+        f" entities={len(pol.presidio_entities)}"
+    )
+    print(f"  allowlist={len(pol.exact_allowlist)} exact + {len(pol.allowlist_regex)} regex")
+    print(f"  diff_harnesses={','.join(sorted(pol.diff_harnesses))}")
+    print(f"  curate honor_safety_failures={honor_safety_failures}")
+    print("  scope: secrets + PII only (not topic/refusal filtering)")
 
 
 def main() -> None:
@@ -30,12 +65,23 @@ def main() -> None:
     parser.add_argument(
         "--gitleaks",
         action="store_true",
-        help="Per-file gitleaks on scan-raw (default on when gitleaks is on PATH)",
+        help="Force gitleaks on scan-raw (default on when gitleaks is on PATH)",
     )
     parser.add_argument(
         "--no-gitleaks",
         action="store_true",
         help="Disable gitleaks even if installed",
+    )
+    parser.add_argument(
+        "--gitleaks-per-file",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="scan-raw: one gitleaks pass per JSONL file (default on; use --no-gitleaks-per-file for per-row)",
+    )
+    parser.add_argument(
+        "--no-presidio",
+        action="store_true",
+        help="Skip Presidio in scan-raw and curate-raw",
     )
     parser.add_argument("--presidio", action="store_true", help="Presidio on audit-sample")
     parser.add_argument(
@@ -46,11 +92,15 @@ def main() -> None:
     parser.add_argument("--mark-exec", action="store_true", help="link_logs_to_diffs sets exec=pass")
     parser.add_argument("--public", action="store_true", help="Run public-ingest before personal ingest")
     parser.add_argument("--skip-gated", action="store_true", help="Skip gated HF datasets (SWE-chat)")
+    parser.add_argument("--workers", type=int, default=None, help="Parallel scan/curate file workers")
     args = parser.parse_args()
 
     root = repo_root()
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     curated = data_dir() / "curated" / f"curated-{stamp}.jsonl"
+    scan_workers, curate_workers = _worker_args()
+    if args.workers is not None:
+        scan_workers = curate_workers = max(1, args.workers)
 
     raw_dir = data_dir() / "raw"
     if args.fresh_raw and raw_dir.is_dir():
@@ -77,9 +127,16 @@ def main() -> None:
         )
 
     use_gitleaks = (args.gitleaks or bool(shutil.which("gitleaks"))) and not args.no_gitleaks
-    scan_cmd = ["uv", "run", "--package", "llm-dataprep", "scan-raw", "--no-presidio"]
+    gitleaks_per_file = bool(args.gitleaks_per_file)
+    use_presidio = not args.no_presidio
+    honor_safety_failures = not args.no_honor_safety_failures
+    scan_cmd = ["uv", "run", "--package", "llm-dataprep", "scan-raw", "--workers", str(scan_workers)]
     if use_gitleaks:
-        scan_cmd.extend(["--gitleaks", "--gitleaks-per-file"])
+        scan_cmd.append("--gitleaks")
+        if gitleaks_per_file:
+            scan_cmd.append("--gitleaks-per-file")
+    if not use_presidio:
+        scan_cmd.append("--no-presidio")
     _run(scan_cmd, cwd=root)
 
     curate_cmd = [
@@ -88,15 +145,16 @@ def main() -> None:
         "--package",
         "llm-dataprep",
         "curate-raw",
-        "--no-gitleaks",
-        "--no-presidio",
+        "--workers",
+        str(curate_workers),
     ]
+    if not use_presidio:
+        curate_cmd.append("--no-presidio")
     if args.no_honor_safety_failures:
         curate_cmd.append("--no-honor-safety-failures")
     _run(curate_cmd, cwd=root)
 
     if not curated.is_file():
-        # curate writes dated file — pick latest
         curated_dir = data_dir() / "curated"
         candidates = sorted(curated_dir.glob("curated-*.jsonl"))
         if not candidates:
@@ -141,7 +199,7 @@ def main() -> None:
         "--curated",
         str(curated),
     ]
-    if args.presidio:
+    if args.presidio or use_presidio:
         audit_cmd.append("--use-presidio")
     if use_gitleaks:
         audit_cmd.append("--gitleaks")
@@ -173,6 +231,13 @@ def main() -> None:
     _run(wh_load, cwd=root)
 
     print(f"\nPhase 1 pipeline done. Curated: {curated}")
+    print(f"Workers: scan={scan_workers} curate={curate_workers} presidio={use_presidio}")
+    _print_safety_policy(
+        use_gitleaks=use_gitleaks,
+        gitleaks_per_file=gitleaks_per_file,
+        use_presidio=use_presidio,
+        honor_safety_failures=honor_safety_failures,
+    )
 
 
 if __name__ == "__main__":

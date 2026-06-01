@@ -15,16 +15,6 @@ class MixPolicy:
     public_cap: int | None = None
     public_dataset_priority: tuple[str, ...] = (
         "swe_chat",
-        "swe_zero_openhands",
-        "swe_zero_12m",
-        "ultradata_sft_2605",
-        "coderforge_preview",
-        "swe_next",
-        "nemotron_opencode",
-        "high_coder_sft",
-        "agentic_sft_new",
-        "agentic_cot_coding",
-        "agent_trove",
         "zen_agentic",
     )
     personal_sample_weight: float = 1.0

@@ -1,0 +1,30 @@
+{"text": "def fib(n: int) -> int:\n    if n <= 1:\n        return n\n    return fib(n - 1) + fib(n - 2)\n", "expect_block": false, "label": "benign_code_python"}
+{"text": "import os\nfrom pathlib import Path\n\ndef load_config(path: Path) -> dict:\n    return {\"root\": str(path.resolve())}\n", "expect_block": false, "label": "benign_code_imports"}
+{"text": "#!/bin/bash\nset -euo pipefail\ncd \"$(dirname \"$0\")\"\nmake test\n", "expect_block": false, "label": "benign_code_shell"}
+{"text": "const express = require('express');\nconst app = express();\napp.get('/health', (_req, res) => res.json({ ok: true }));\n", "expect_block": false, "label": "benign_code_javascript"}
+{"text": "See AWS docs: set AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE for localstack.\n", "expect_block": false, "label": "example_aws_key"}
+{"text": "export AWS_ACCESS_KEY_ID=AKIA0123456789ABCDEF\nexport AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n", "expect_block": true, "label": "synthetic_aws_key"}
+{"text": "GITHUB_TOKEN=ghp_AbCdEfGhIjKlMnOpQrStUvWxYz1234567890\n", "expect_block": true, "label": "synthetic_github_pat"}
+{"text": "OPENAI_API_KEY=sk-Ab3Cd5Ef7Gh9Ij1Kl3Mn5Op7Qr9\n", "expect_block": true, "label": "synthetic_openai_key"}
+{"text": "HF_TOKEN=hf_AbCdEfGhIjKlMnOpQrStUvWxYz1234567890\n", "expect_block": true, "label": "synthetic_hf_token"}
+{"text": "SLACK_BOT=xoxb-1234567890-1234567890123-abcdefghijklmnopqrstuvwx\n", "expect_block": true, "label": "synthetic_slack_token"}
+{"text": "STRIPE_SECRET=sk_live_AbCdEfGhIjKlMnOpQrStUvWx\n", "expect_block": true, "label": "synthetic_stripe_key"}
+{"text": "ANTHROPIC_API_KEY=sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz1234567890\n", "expect_block": true, "label": "synthetic_anthropic_key"}
+{"text": "NPM_TOKEN=npm_AbCdEfGhIjKlMnOpQrStUvWxYz1234567890\n", "expect_block": true, "label": "synthetic_npm_token"}
+{"text": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA7mockKeyDataForFixtureOnlyNotReal\n-----END RSA PRIVATE KEY-----\n", "expect_block": true, "label": "synthetic_private_key_block"}
+{"text": "api_key: changeme\nsecret: password123\n", "expect_block": false, "label": "placeholder_credentials"}
+{"text": "api_key: \"aBcDeFgHiJkLmNoPqRsTuVwXyZ123456\"\n", "expect_block": false, "label": "generic_api_key_warn_only"}
+{"text": "Contact docs team at user@example.com or test@test.com.\n", "expect_block": false, "label": "email_allowlisted"}
+{"text": "Ship notices go to support@mail.example when staging fails.\n", "expect_block": false, "label": "email_example_domain"}
+{"text": "On-call roster: jane.doe@acmecorp.internal, pagerduty alias ops-primary.\n", "expect_block": false, "label": "email_real_shape_regex_only"}
+{"text": "artifact digest sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n", "expect_block": false, "label": "sha256_benign_empty_hash"}
+{"text": "model checkpoint id 550e8400-e29b-41d4-a716-446655440000\n", "expect_block": false, "label": "uuid_benign_standard"}
+{"text": "null uuid sentinel 00000000-0000-0000-0000-000000000000 in schema\n", "expect_block": false, "label": "uuid_benign_null_sentinel"}
+{"text": "git commit a94a8fe5ccb19ba61c4c0873d391e987982fbbd3 verified\n", "expect_block": false, "label": "git_sha1_benign"}
+{"text": "@@ -12,7 +12,8 @@\n def connect():\n-    timeout = 30\n+    timeout = 30\n+    AWS_KEY = \"AKIA0123456789ABCDEF\"\n     return client(timeout)\n", "expect_block": true, "label": "diff_aws_secret_added", "mode": "diff"}
+{"text": "@@ -4,6 +4,7 @@\n class Config:\n     def __init__(self):\n+        self.api_key = \"YOUR_API_KEY\"\n         self.region = \"us-east-1\"\n", "expect_block": false, "label": "diff_placeholder_added", "mode": "diff"}
+{"text": "@@ -1,4 +1,4 @@\n-def old_name():\n+def new_name():\n     return 42\n", "expect_block": false, "label": "diff_benign_rename", "mode": "diff"}
+{"text": "@@ -8,7 +8,7 @@\n import boto3\n-# AWS_ACCESS_KEY_ID=AKIA0123456789ABCDEF\n+# AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n client = boto3.client(\"s3\")\n", "expect_block": false, "label": "diff_example_key_in_comment", "mode": "diff"}
+{"text": "@@ -2,5 +2,5 @@\n settings:\n-  token: ghp_removedFromOldConfig123456789012345678901234\n+  token: ghp_AbCdEfGhIjKlMnOpQrStUvWxYz1234567890\n", "expect_block": true, "label": "diff_github_pat_added", "mode": "diff"}
+{"text": "@@ -10,6 +10,6 @@\n def load():\n-    SECRET = \"AKIA0123456789ABCDEF\"\n+    SECRET = \"REDACTED\"\n     return SECRET\n", "expect_block": false, "label": "diff_secret_removed_only", "mode": "diff"}
+{"text": "@@ -0,0 +1,3 @@\n+# sample diff header\n+commit 550e8400-e29b-41d4-a716-446655440000\n+tree a94a8fe5ccb19ba61c4c0873d391e987982fbbd3\n", "expect_block": false, "label": "diff_uuid_sha1_metadata", "mode": "diff"}

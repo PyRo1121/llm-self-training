@@ -275,7 +275,6 @@ def _run_train_unsloth(args, cfg: dict, unsloth: dict, train_path: Path, stats: 
         maybe_pack_unsloth_dataset,
         prepare_unsloth_messages_dataset,
         resolve_unsloth_runtime_flags,
-        resolve_unsloth_runtime_flags,
         split_train_eval_dataset,
     )
 
@@ -424,7 +423,7 @@ def _run_train_unsloth(args, cfg: dict, unsloth: dict, train_path: Path, stats: 
     flags = resolve_unsloth_runtime_flags(unsloth)
     packed = False
     dataset, packed = maybe_pack_unsloth_dataset(dataset, unsloth, max_seq)
-    use_weighted_sampler = not packed and not flags.get("use_padding_free")
+    use_weighted_sampler = not packed
 
     epochs = args.epochs if args.epochs is not None else cfg["num_epochs"]
     n = len(dataset)
@@ -474,8 +473,6 @@ def _run_train_unsloth(args, cfg: dict, unsloth: dict, train_path: Path, stats: 
         _attach_weighted_sampler(trainer, cfg)
     elif packed:
         print("Weighted sampler off (BFD-packed dataset)", flush=True)
-    elif flags.get("use_padding_free"):
-        print("Weighted sampler on (padding-free FA2 path)", flush=True)
 
     run_name = out_dir.name
     n_train = len(trainer.train_dataset)

@@ -1,4 +1,4 @@
-"""Turso Step 0/2 smoke — verify warehouse driver (docs/TURSO.md)."""
+"""Turso Step 0/2 smoke — verify warehouse driver (docs/oss/TURSO.md)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Warehouse DB connection — sqlite3 or pyturso per docs/TURSO.md."""
+"""Warehouse DB connection — sqlite3 or pyturso per docs/oss/TURSO.md."""
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ def connect(path: Path | None = None, *, config: WarehouseConfig | None = None) 
             kwargs["experimental_features"] = ",".join(cfg.experimental_features)
         conn = turso.connect(str(db_path), **kwargs)
         conn.row_factory = turso.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
     conn = sqlite3.connect(db_path)

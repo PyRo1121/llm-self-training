@@ -1,0 +1,14 @@
+# Project-local Valkey/Redis for github-harvest cache (copy → redis.local.conf; gitignored)
+# Generate: scripts/redis-local.sh (reads REDIS_PASSWORD from .env)
+
+port 6380
+bind 127.0.0.1
+protected-mode yes
+daemonize no
+dir "REDIS_DATA_DIR"
+dbfilename dump.rdb
+appendonly yes
+appendfilename "appendonly.aof"
+maxmemory 256mb
+maxmemory-policy allkeys-lru
+# requirepass set by scripts/redis-local.sh from REDIS_PASSWORD

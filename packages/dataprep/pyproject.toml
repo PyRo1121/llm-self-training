@@ -7,6 +7,7 @@ dependencies = [
     "datasets>=4.7",
     "huggingface-hub>=1.16.1",
     "llm-core",
+    "pyarrow>=18.0",
 ]
 
 [project.optional-dependencies]
@@ -16,6 +17,14 @@ safety = [
     "presidio-analyzer>=2.2",
     "presidio-anonymizer>=2.2",
 ]
+# Install git + safety together: uv sync --package llm-dataprep --extra full
+full = [
+    "pydriller>=2.6",
+    "presidio-analyzer>=2.2",
+    "presidio-anonymizer>=2.2",
+    "redis>=5.0",
+]
+harvest = ["redis>=5.0", "PyJWT>=2.8", "cryptography>=42"]
 
 [project.scripts]
 cursor-transcripts = "llm_dataprep.cursor_transcripts:main"
@@ -33,6 +42,8 @@ training-manifest = "llm_dataprep.training_manifest:main"
 training-extract = "llm_dataprep.training_extract:main"
 warehouse-sync-registry = "llm_dataprep.warehouse_sync_registry:main"
 probe-hf-schema = "llm_dataprep.probe_hf_schema:main"
+safety-eval = "llm_dataprep.safety_eval:main"
+github-harvest = "llm_dataprep.github_harvest:main"
 
 [build-system]
 requires = ["uv_build>=0.11.16,<0.12.0"]

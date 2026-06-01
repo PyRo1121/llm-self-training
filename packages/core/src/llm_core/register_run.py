@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from llm_core.control_plane import _resolve_adapter_dir, register_training_run

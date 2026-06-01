@@ -5,7 +5,6 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from llm_core.paths import warehouse_db
 
 SCHEMA_VERSION = 4
 

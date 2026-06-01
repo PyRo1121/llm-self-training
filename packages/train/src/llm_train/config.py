@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from llm_core import data_dir, repo_root, runs_dir
 from llm_core.yaml_config import load_yaml_config
 def _merge_profile(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
     if not overrides:

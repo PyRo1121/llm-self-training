@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from llm_core.control_plane import ensure_warehouse, register_benchmark_run
-from llm_core.paths import eval_dir, repo_root, runs_dir
+from llm_core.paths import eval_dir, runs_dir
 from llm_eval.suites import load_suite, suite_is_placeholder_only
 
 
@@ -91,7 +91,12 @@ def evaluate_suite(
                 "passed": 0,
             }
 
-    verdict = "pass" if passed > 0 or not smoke_chat else "fail"
+    if passed > 0:
+        verdict = "pass"
+    elif not smoke_chat:
+        verdict = "incomplete"
+    else:
+        verdict = "fail"
     return {
         "suite": name,
         "verdict": verdict,

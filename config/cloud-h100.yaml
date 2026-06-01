@@ -63,12 +63,3 @@ public_datasets:
     swe_zero_openhands:
       enabled: true
       max_rows: null
-    codex_7m:
-      enabled: true
-      max_rows: null
-    codex_2m_thinking:
-      enabled: true
-      max_rows: null
-    agent_trove:
-      enabled: true
-      max_rows: null

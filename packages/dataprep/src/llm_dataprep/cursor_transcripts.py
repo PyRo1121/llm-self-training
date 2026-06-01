@@ -21,6 +21,40 @@ from llm_core import data_dir, repo_root
 
 DEFAULT_PROJECTS_ROOT = Path.home() / ".cursor/projects"
 USER_QUERY_RE = re.compile(r"<user_query>\s*(.*?)\s*</user_query>", re.DOTALL)
+_TOOL_INPUT_KEYS = (
+    "command",
+    "description",
+    "path",
+    "pattern",
+    "query",
+    "url",
+    "glob_pattern",
+    "target_directory",
+    "working_directory",
+)
+
+
+def _summarize_tool_input(inp: Any, *, max_len: int = 480) -> str:
+    if isinstance(inp, dict):
+        bits: list[str] = []
+        for key in _TOOL_INPUT_KEYS:
+            val = inp.get(key)
+            if val is None or val == "":
+                continue
+            text = str(val).strip()
+            if len(text) > 120:
+                text = text[:117] + "…"
+            bits.append(f"{key}={text}")
+        if not bits:
+            raw = json.dumps(inp, ensure_ascii=False, separators=(",", ":"))
+            text = raw if len(raw) <= max_len else raw[: max_len - 1] + "…"
+        else:
+            text = " ".join(bits)
+    else:
+        text = str(inp).strip()
+    if len(text) > max_len:
+        return text[: max_len - 1] + "…"
+    return text
 
 
 @dataclass
@@ -46,6 +80,34 @@ class TranscriptRecord:
         }
 
 
+def _normalize_role(obj: dict[str, Any]) -> str | None:
+    role = obj.get("role")
+    if isinstance(role, str):
+        role_key = role.lower()
+        if role_key == "human":
+            return "user"
+        if role_key in ("user", "assistant"):
+            return role_key
+    kind = obj.get("type")
+    if isinstance(kind, str):
+        kind_key = kind.lower()
+        if kind_key == "human":
+            return "user"
+        if kind_key in ("user", "assistant"):
+            return kind_key
+    return None
+
+
+def _text_from_content(content: Any) -> tuple[str, bool]:
+    if isinstance(content, str):
+        text = content.strip()
+        m = USER_QUERY_RE.search(text)
+        return (m.group(1).strip() if m else text), False
+    if isinstance(content, list):
+        return _extract_text(content)
+    return "", False
+
+
 def _extract_text(content_blocks: list[dict[str, Any]]) -> tuple[str, bool]:
     parts: list[str] = []
     has_tool = False
@@ -59,6 +121,9 @@ def _extract_text(content_blocks: list[dict[str, Any]]) -> tuple[str, bool]:
             parts.append(m.group(1).strip() if m else t)
         elif kind == "tool_use":
             has_tool = True
+            name = block.get("name") or "tool"
+            summary = _summarize_tool_input(block.get("input"))
+            parts.append(f"[tool {name}] {summary}")
     return "\n".join(p for p in parts if p).strip(), has_tool
 
 
@@ -70,14 +135,20 @@ def parse_line(line: str, *, session_id: str, source_path: str, line_no: int) ->
         obj = json.loads(line)
     except json.JSONDecodeError:
         return None
-    role = obj.get("role")
-    if role not in ("user", "assistant"):
+    role = _normalize_role(obj)
+    if role is None:
         return None
-    message = obj.get("message") or {}
-    content = message.get("content")
-    if not isinstance(content, list):
+    message = obj.get("message")
+    content: Any = None
+    if isinstance(message, str):
+        content = message
+    elif isinstance(message, dict):
+        content = message.get("content")
+    if content is None:
+        content = obj.get("content")
+    if content is None:
         return None
-    text, has_tool = _extract_text(content)
+    text, has_tool = _text_from_content(content)
     if not text:
         return None
     return TranscriptRecord(

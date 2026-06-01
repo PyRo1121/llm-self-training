@@ -147,6 +147,21 @@ def _run_harness(
     raise ValueError(name)
 
 
+def _default_max_codex_mb() -> float | None:
+    from llm_core import config_dir
+
+    path = config_dir() / "default.yaml"
+    if path.is_file():
+        import yaml
+
+        with path.open(encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh) or {}
+        raw = (doc.get("paths") or {}).get("codex_max_file_mb")
+        if raw is not None:
+            return None if float(raw) == 0 else float(raw)
+    return 200.0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Ingest local agent logs into data/raw (see packages/dataprep/AGENT_HARNESSES.md)"
@@ -163,7 +178,7 @@ def main() -> None:
     parser.add_argument("--include-aider-tool", action="store_true")
     parser.add_argument("--limit-files", type=int, default=None)
     parser.add_argument("--aider-scan", type=Path, nargs="*", default=None)
-    parser.add_argument("--max-codex-mb", type=float, default=50.0)
+    parser.add_argument("--max-codex-mb", type=float, default=None)
     args = parser.parse_args()
 
     if args.list_harnesses:
@@ -183,7 +198,9 @@ def main() -> None:
         for part in names:
             get_harness(part)
 
-    max_mb = None if args.max_codex_mb == 0 else args.max_codex_mb
+    max_mb = _default_max_codex_mb() if args.max_codex_mb is None else (
+        None if args.max_codex_mb == 0 else args.max_codex_mb
+    )
     total = 0
     for name in names:
         label, path, n = _run_harness(

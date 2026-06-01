@@ -16,9 +16,7 @@ import time
 from pathlib import Path
 from typing import Any, TextIO
 
-import yaml
 
-from llm_core.paths import config_dir
 from llm_core.yaml_config import load_yaml_config
 
 HYPRWSPR_UNIT = "hyprwhspr.service"

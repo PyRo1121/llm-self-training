@@ -21,8 +21,8 @@ Every audit **must** produce evidence from:
 
 | # | Tool | MCP server / command |
 |---|------|----------------------|
-| 1 | **Context7** | `user-context7` (from `~/.cursor/mcp.json` + `CONTEXT7_API_KEY`) → `resolve-library-id` then `query-docs` |
-| 2 | **Exa** | `user-exa` (from `~/.cursor/mcp.json` + `x-api-key`) → `web_search_exa` and/or `web_fetch_exa` |
+| 1 | **Context7** | Cursor plugin `plugin-context7-plugin-context7` → `resolve-library-id` then `query-docs` |
+| 2 | **Exa** | Cursor plugin `plugin-exa-exa` → `web_search_exa` and/or `web_fetch_exa` |
 | 3 | **Shell** | `rtk` / `uv run` / `curl` / `pytest` / `nvidia-smi` (exact commands in task) |
 | 4 | **Repo** | `Grep`, `Read`, `git diff`, `git log` |
 
@@ -30,7 +30,7 @@ If Exa or Context7 is rate-limited, report **BLOCKED: &lt;tool&gt;** and set ove
 
 Details: [`docs/AUDIT-PROTOCOL.md`](docs/AUDIT-PROTOCOL.md)
 
-**MCP API keys (local only):** Copy [`.cursor/mcp.json.example`](.cursor/mcp.json.example) → `~/.cursor/mcp.json` headers (`CONTEXT7_API_KEY`, `x-api-key` for Exa). Reload Cursor MCP after change. Never commit real keys.
+**MCP (Cursor built-in):** Use marketplace **Context7** + **Exa** plugins — do **not** duplicate them in `~/.cursor/mcp.json` unless you need a paid API key. Free-tier plugin quotas often require the workspace linked to a **public** GitHub repo; private repos may hit rate limits until you pay or make the repo public.
 
 ## Task / subagent dispatch (mandatory prompt block)
 
@@ -39,9 +39,9 @@ When spawning **any** review or audit subagent, include verbatim:
 ```
 AUDIT MODE — MANDATORY TOOLS (skip = audit INVALID)
 
-1. Context7: Use MCP server **`user-context7`** (not `plugin-context7-*`). Call `resolve-library-id` + `query-docs` for each library in scope. Paste 1–2 snippets.
+1. Context7: MCP server **`plugin-context7-plugin-context7`**. Call `resolve-library-id` + `query-docs` for each library in scope. Paste 1–2 snippets.
 
-2. Exa: Use MCP server **`user-exa`** (not `plugin-exa-*`). Call `web_search_exa` for each external claim. If rate-limited, say BLOCKED.
+2. Exa: MCP server **`plugin-exa-exa`**. Call `web_search_exa` for each external claim. If rate-limited, say BLOCKED (check repo visibility on GitHub).
 
 3. Shell: Run every command in your scope. Paste exit code + last 15 lines. No PASS without running them.
 
@@ -62,6 +62,7 @@ Subagent settings:
 
 | Path | Role |
 |------|------|
+| `Makefile` | Operator shortcuts — `make help` |
 | `packages/core` | Warehouse, `gpu_mutex`, `control_plane`, `clear-gpu-vram` |
 | `packages/train` | `train-qlora`, Chronicals runtime, VRAM budget |
 | `packages/eval` | `run-eval` promote gate |
@@ -69,11 +70,26 @@ Subagent settings:
 | `apps/api` | Control plane FastAPI `:8080` |
 | `apps/dashboard` | Bun/Vite UI `:5173` |
 | `config/default.yaml` | Train + gpu_mutex + chronicals |
-| `eval/internal/*.jsonl` | Eval suites (placeholders until real tasks) |
-| `docs/PHASE2-TRAIN.md` | Train runbook |
-| `docs/PHASE15-PHASE2-SIGNOFF.md` | Sign-off commands |
+| `eval/internal/*.jsonl` | Eval suite definitions |
+| `docs/oss/` | Canonical documentation — start at `docs/oss/README.md` |
+| `docs/AUDIT-PROTOCOL.md` | Audit tool checklist |
 
 ## Commands (prefer `rtk` in agent shell per user rules)
+
+**Operator Makefile** (root `Makefile`): `make help` — wraps uv entrypoints for train, data, sanitize, GPU, API.
+
+```bash
+make sync-all
+make warehouse-smoke          # or: uv run --package llm-core warehouse-smoke
+make gpu-clear                # or: uv run --package llm-core clear-gpu-vram
+make prepare-mixed            # manifest + extract → data/train/personal-first.jsonl
+make train-smoke
+make train                    # mixed 80/20; make train-personal for personal-only
+make phase2-done RUN=pyro-coder-bootstrap
+make test                     # pytest gpu_mutex
+```
+
+Equivalent uv (when Makefile flags are insufficient):
 
 ```bash
 uv sync --package llm-core --package llm-train --package llm-eval --package llm-api
@@ -84,14 +100,59 @@ uv run --package llm-eval run-eval --train-run pyro-coder-bootstrap --no-smoke-c
 uv run pytest packages/core/tests/test_gpu_mutex.py -q
 ```
 
-API (separate terminal): `uv run --package llm-api llm-api`
+API (separate terminal): `make api` or `uv run --package llm-api llm-api`
 
-## Phase completion criteria
+## Promote gate
 
-- **1.5:** API routes + warehouse + dashboard Training tab + `scripts/verify-phase15.sh` evidence
-- **2 train:** `runs/pyro-coder-bootstrap/adapter` or `checkpoint-*` + warehouse row
-- **2 promote:** `run-eval --strict` + real eval JSONL + `train-export` + Ollama — not placeholder pass alone
+- **Train artifact:** `runs/<run>/adapter` or `checkpoint-*` + warehouse row via `make train-register`
+- **Eval:** `make eval RUN=…` — use `--strict` with real tasks in `eval/internal/*.jsonl`
+- **Export:** `make export RUN=…` + Ollama — not placeholder eval pass alone
+- **Verify stack:** `make verify-phase15` (API + dashboard build)
 
 ## GPU
 
-12 GB 4070 Ti. Before train: `uv run --package llm-core clear-gpu-vram`. Ghost VRAM → logout/reboot; primary GPU blocks `nvidia-smi --gpu-reset`.
+12 GB 4070 Ti. Before train: `make gpu-clear` or `uv run --package llm-core clear-gpu-vram`. Ghost VRAM → logout/reboot; primary GPU blocks `nvidia-smi --gpu-reset`.
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **llm-self-training** (2770 symbols, 4534 relationships, 218 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+
+> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+
+## Always Do
+
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
+- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+
+## Never Do
+
+- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+
+## Resources
+
+| Resource | Use for |
+|----------|---------|
+| `gitnexus://repo/llm-self-training/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/llm-self-training/clusters` | All functional areas |
+| `gitnexus://repo/llm-self-training/processes` | All execution flows |
+| `gitnexus://repo/llm-self-training/process/{name}` | Step-by-step execution trace |
+
+## CLI
+
+| Task | Read this skill file |
+|------|---------------------|
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+
+<!-- gitnexus:end -->

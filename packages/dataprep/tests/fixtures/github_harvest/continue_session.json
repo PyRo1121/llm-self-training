@@ -1,0 +1,19 @@
+{
+  "sessionId": "fixture-continue-1",
+  "history": [
+    {
+      "message": {
+        "role": "user",
+        "content": "How do I run pytest in this monorepo?"
+      }
+    },
+    {
+      "message": {
+        "role": "assistant",
+        "content": [
+          {"type": "text", "text": "Use uv run pytest from the repo root."}
+        ]
+      }
+    }
+  ]
+}

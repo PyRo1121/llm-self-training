@@ -10,7 +10,33 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from llm_dataprep.filters import scan_text
+from llm_dataprep.filters import SafetyFinding, scan_text
+from llm_dataprep.safety_policy import (
+    Severity,
+    classify_finding,
+    findings_to_dicts,
+    load_safety_policy,
+)
+
+
+def _safety_policy_report(text: str, *, use_gitleaks: bool, use_presidio: bool) -> dict[str, Any]:
+    pol = load_safety_policy()
+    report = scan_text(text, use_gitleaks=use_gitleaks, use_presidio=use_presidio)
+    block: list[SafetyFinding] = []
+    warn: list[SafetyFinding] = []
+    for finding in report.findings:
+        sev = classify_finding(finding, pol)
+        if sev == Severity.BLOCK:
+            block.append(finding)
+        elif sev == Severity.WARN:
+            warn.append(finding)
+    sevs = [Severity.BLOCK] * len(block) + [Severity.WARN] * len(warn)
+    return {
+        "ok": report.ok,
+        "block_count": len(block),
+        "warn_count": len(warn),
+        "findings": findings_to_dicts(block + warn, sevs),
+    }
 
 
 def main() -> None:
@@ -45,25 +71,37 @@ def main() -> None:
         pool.extend(rng.sample(rest, min(args.n - len(pool), len(rest))))
 
     pool = pool[: args.n]
-    findings_count = 0
+    rows_quarantine = 0
+    rows_with_block = 0
+    rows_with_warn = 0
+    total_block_findings = 0
+    total_warn_findings = 0
     report_rows: list[dict[str, Any]] = []
 
     for i, row in enumerate(pool):
         text = "\n\n".join(m.get("content", "") for m in row.get("messages", []))
-        safety = scan_text(
+        safety = _safety_policy_report(
             text,
             use_gitleaks=args.gitleaks,
             use_presidio=args.use_presidio,
         )
-        if not safety.ok:
-            findings_count += 1
+        n_block = int(safety["block_count"])
+        n_warn = int(safety["warn_count"])
+        total_block_findings += n_block
+        total_warn_findings += n_warn
+        if n_block:
+            rows_with_block += 1
+        if n_warn:
+            rows_with_warn += 1
+        if not safety["ok"]:
+            rows_quarantine += 1
         report_rows.append(
             {
                 "audit_index": i,
                 "harness": row.get("meta", {}).get("harness"),
                 "session_id": row.get("meta", {}).get("session_id"),
                 "chunk_index": row.get("meta", {}).get("chunk_index"),
-                "safety": safety.to_dict(),
+                "safety": safety,
                 "preview": text[:400],
             }
         )
@@ -80,19 +118,33 @@ def main() -> None:
 
     with md_path.open("w", encoding="utf-8") as fh:
         fh.write(f"# Phase 1 audit sample ({stamp})\n\n")
-        fh.write(f"Rows: **{len(report_rows)}** · Flagged: **{findings_count}**\n\n")
-        fh.write("| # | harness | session | ok | findings |\n")
-        fh.write("|---|---------|---------|----|---------|\n")
+        fh.write(f"Rows sampled: **{len(report_rows)}**\n\n")
+        fh.write("## Safety policy summary\n\n")
+        fh.write("| metric | count |\n")
+        fh.write("|--------|------:|\n")
+        fh.write(f"| rows quarantine (policy) | {rows_quarantine} |\n")
+        fh.write(f"| rows with ≥1 block finding | {rows_with_block} |\n")
+        fh.write(f"| rows with ≥1 warn finding | {rows_with_warn} |\n")
+        fh.write(f"| total block findings | {total_block_findings} |\n")
+        fh.write(f"| total warn findings | {total_warn_findings} |\n")
+        fh.write("\n## Per-row sample\n\n")
+        fh.write("| # | harness | session | ok | block | warn |\n")
+        fh.write("|---|---------|---------|----|------:|-----:|\n")
         for r in report_rows:
             ok = r["safety"]["ok"]
-            n_find = len(r["safety"].get("findings") or [])
+            n_block = r["safety"]["block_count"]
+            n_warn = r["safety"]["warn_count"]
             sid = str(r.get("session_id") or "")[:12]
             fh.write(
-                f"| {r['audit_index']} | {r.get('harness')} | {sid} | {ok} | {n_find} |\n"
+                f"| {r['audit_index']} | {r.get('harness')} | {sid} | {ok} | {n_block} | {n_warn} |\n"
             )
-        fh.write("\nOperator: manually review flagged rows before Phase 2 train.\n")
+        fh.write("\nOperator: manually review quarantine rows before Phase 2 train.\n")
 
-    print(f"Audit sample → {jsonl_path} ({findings_count}/{len(report_rows)} flagged)")
+    print(
+        f"Audit sample → {jsonl_path} "
+        f"({rows_quarantine}/{len(report_rows)} quarantine, "
+        f"{total_block_findings} block / {total_warn_findings} warn findings)"
+    )
     print(f"Summary → {md_path}")
 
 

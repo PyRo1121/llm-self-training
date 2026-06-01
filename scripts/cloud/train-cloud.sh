@@ -150,7 +150,7 @@ fi
 if [[ "${SKIP_INGEST}" -eq 0 ]]; then
   echo "=== [5/11] Public HF ingest (${INGEST_MODE}) ==="
   if [[ "${INGEST_MODE}" == "bootstrap" ]]; then
-    make public-ingest PUBLIC_DATASETS="cooper_qwen9b_coop_claude,swe_next,high_coder_sft,nemotron_opencode,agentic_sft_new"
+    make public-ingest PUBLIC_DATASETS="cooper_qwen9b_coop_claude,swe_next,nemotron_opencode,agentic_sft_new"
   else
     make public-ingest
   fi

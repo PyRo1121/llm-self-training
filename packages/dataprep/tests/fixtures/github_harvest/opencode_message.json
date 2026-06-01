@@ -1,0 +1,7 @@
+{
+  "role": "assistant",
+  "parts": [
+    {"type": "text", "text": "I will add tests for the harvest parsers."},
+    {"type": "reasoning", "text": "skip non-text parts"}
+  ]
+}

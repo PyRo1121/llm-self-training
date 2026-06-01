@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from llm_dataprep.cursor_transcripts import _summarize_tool_input
 from llm_dataprep.raw_io import append_records
 
 DEFAULT_ROOT = Path.home() / ".claude/projects"
@@ -18,23 +19,38 @@ def iter_session_files(root: Path) -> Iterator[Path]:
     yield from sorted(root.rglob("*.jsonl"))
 
 
+def _normalize_type(kind: str | None) -> str | None:
+    if kind == "human":
+        return "user"
+    if kind in ("user", "assistant"):
+        return kind
+    return None
+
+
 def _role_and_text(obj: dict[str, Any]) -> tuple[str | None, str]:
-    # Newer shape: type user/assistant + message string or object
-    t = obj.get("type")
-    if t in ("user", "assistant"):
+    # Newer shape: type user/assistant/human + message string or object
+    role = _normalize_type(obj.get("type"))
+    if role:
         msg = obj.get("message")
         if isinstance(msg, str):
-            return t, msg.strip()
+            return role, msg.strip()
         if isinstance(msg, dict):
             content = msg.get("content")
             if isinstance(content, str):
-                return t, content.strip()
+                return role, content.strip()
             if isinstance(content, list):
                 parts = []
                 for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
+                    if not isinstance(block, dict):
+                        continue
+                    kind = block.get("type")
+                    if kind == "text":
                         parts.append(block.get("text") or "")
-                return t, "\n".join(parts).strip()
+                    elif kind == "tool_use":
+                        name = block.get("name") or "tool"
+                        summary = _summarize_tool_input(block.get("input"))
+                        parts.append(f"[tool {name}] {summary}")
+                return role, "\n".join(p for p in parts if p).strip()
     # Alternate: message.role + message.content (Cursor-like)
     message = obj.get("message") or {}
     if isinstance(message, dict):

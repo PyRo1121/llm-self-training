@@ -27,11 +27,50 @@ def _event_dirs(root: Path) -> Iterator[tuple[Path, str]]:
                 yield events, conv_dir.name
 
 
+def _role_from_source(src: Any) -> str | None:
+    if src == "user":
+        return "user"
+    if src in ("agent", "assistant"):
+        return "assistant"
+    return None
+
+
+def _text_from_llm_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                if block.get("type") == "text":
+                    parts.append(str(block.get("text") or ""))
+                elif "text" in block:
+                    parts.append(str(block["text"]))
+        return "\n".join(p for p in parts if p).strip()
+    return ""
+
+
 def _text_from_event(ev: dict[str, Any]) -> tuple[str | None, str]:
+    kind = ev.get("kind")
+    llm_msg = ev.get("llm_message")
+    if kind in ("MessageEvent", "message") or (
+        isinstance(llm_msg, dict) and ev.get("source") in ("user", "agent", "assistant")
+    ):
+        role = _role_from_source(ev.get("source"))
+        if isinstance(llm_msg, dict):
+            msg_role = llm_msg.get("role")
+            text = _text_from_llm_content(llm_msg.get("content"))
+            if role is None and msg_role in ("user", "assistant"):
+                role = msg_role
+            return role, text
+        return role, ""
+
     # OpenHands V0/V1 shapes vary; try common fields
-    if ev.get("action") == "message" or ev.get("source") in ("user", "agent"):
+    if ev.get("action") == "message" or ev.get("source") in ("user", "agent", "assistant"):
         src = ev.get("source")
-        role = "user" if src == "user" else "assistant" if src == "agent" else None
+        role = _role_from_source(src)
         args = ev.get("args") or ev.get("message") or {}
         if isinstance(args, str):
             return role, args.strip()

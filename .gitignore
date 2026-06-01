@@ -92,6 +92,9 @@ secrets.yml
 # Cursor — keep rules; ignore local MCP secrets
 .cursor/mcp.json
 
+# Local Redis config (contains requirepass from .env)
+config/redis.local.conf
+
 # --- Dashboard (Bun) ---
 apps/dashboard/node_modules/
 apps/dashboard/dist/

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 
 from llm_core.yaml_config import load_yaml_config, profile_path
 

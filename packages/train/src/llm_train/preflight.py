@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+import importlib.util
+
+from llm_train.quiet import apply_train_quiet, suppress_unsloth_import_noise
+
+apply_train_quiet()
+
+if importlib.util.find_spec("unsloth") is not None:
+    with suppress_unsloth_import_noise():
+        import unsloth  # noqa: F401, E402
+
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 from llm_train.config import (
     chronicals_settings,
@@ -20,7 +29,13 @@ from llm_train.chronicals_runtime import (
     _flash_attn_available,
     load_train_tokenizer,
 )
-from llm_train.vram_budget import _hard_max_seq, resolve_vram_train_params
+from llm_train.flash_attn import flash_attn_available
+from llm_train.token_audit import audit_messages_lengths, print_token_audit
+from llm_train.vram_budget import (
+    plan_unsloth_training,
+    resolve_vram_train_params,
+    unsloth_vram_seq_ceiling,
+)
 
 
 def _ok(msg: str) -> None:
@@ -167,16 +182,88 @@ def run_preflight(
 
     # --- dataset ---
     print("[dataset / assistant_only_loss]")
+    import torch
+
+    if torch.cuda.is_available():
+        from llm_core.gpu_mutex import reclaim_gpu_before_load
+
+        if reclaim_gpu_before_load():
+            _ok("GPU reclaimed for VRAM plan (same as train-qlora — close browser if seq stuck @ 768)")
+        else:
+            _warn(
+                "GPU reclaim incomplete (<8 GiB free) — close browser/Ollama; "
+                "2048 needs flash-attn + ~10 GiB free"
+            )
     free_gb, total_gb = (x / (1024**3) for x in torch.cuda.mem_get_info()) if torch.cuda.is_available() else (0.0, 0.0)
-    max_seq, batch, grad_accum, vram_reason = resolve_vram_train_params(
-        cfg,
-        smoke=False,
-        free_gb=free_gb,
-        total_gb=total_gb,
-        chronicals=chronicals if backend == "chronicals" else None,
-        backend=backend,
-        unsloth=unsloth if backend == "unsloth" else None,
-    )
+    if torch.cuda.is_available():
+        _ok(f"VRAM after reclaim: {free_gb:.1f} GiB free / {total_gb:.1f} GiB total")
+
+    token_rec: int | None = None
+    vram_ceiling: int | None = None
+    if backend == "unsloth":
+        vram_ceiling, ceiling_note = unsloth_vram_seq_ceiling(
+            cfg, unsloth, free_gb=free_gb, total_gb=total_gb
+        )
+        _ok(ceiling_note)
+
+    if backend == "unsloth" and unsloth.get("token_audit", True):
+        print("[token audit]")
+        try:
+            from llm_train.unsloth_runtime import load_unsloth_tokenizer
+
+            audit_tok = load_unsloth_tokenizer(cfg, unsloth)
+            char_cap_pre = int(cfg["max_chars_per_message"]) if cfg.get("max_chars_per_message") else max_chars_for_seq(
+                min(int(cfg["max_seq_length"]), vram_ceiling or int(cfg["max_seq_length"]))
+            )
+            audit_ds, _ = load_messages_dataset(path, max_chars_per_message=char_cap_pre)
+            report, _ = audit_messages_lengths(
+                audit_ds,
+                audit_tok,
+                yaml_cap=int(cfg["max_seq_length_12gb_cap"]),
+                vram_ceiling=int(vram_ceiling or cfg["max_seq_length_12gb_cap"]),
+            percentile=float(unsloth.get("token_audit_percentile", 95)),
+            round_to=int(unsloth.get("token_audit_round_to", 256)),
+            min_seq=int(unsloth.get("token_audit_min_seq", 512)),
+            headroom_ratio=float(unsloth.get("token_audit_headroom_ratio", 1.05)),
+            )
+            print_token_audit(report)
+            token_rec = report.recommended_seq
+            if report.effective_cap < int(cfg["max_seq_length"]):
+                _ok(
+                    f"effective cap {report.effective_cap} < yaml aspire {cfg['max_seq_length']} "
+                    "(VRAM-bound — install flash-attn to unlock 2048)"
+                )
+            if report.would_drop_assistant_at_cap > len(audit_ds) * 0.25:
+                _warn(
+                    f"~{report.would_drop_assistant_at_cap} rows may lose assistant @ "
+                    f"cap {report.effective_cap} — chunk long chats in dataprep"
+                )
+        except Exception as exc:
+            _warn(f"token audit skipped: {exc}")
+        print()
+
+    if backend == "unsloth":
+        plan = plan_unsloth_training(
+            cfg,
+            unsloth,
+            smoke=False,
+            free_gb=free_gb,
+            total_gb=total_gb,
+            token_recommended_seq=token_rec,
+        )
+        max_seq, batch, grad_accum = plan.max_seq, plan.batch_size, plan.grad_accum
+        vram_reason = plan.reason
+    else:
+        max_seq, batch, grad_accum, vram_reason = resolve_vram_train_params(
+            cfg,
+            smoke=False,
+            free_gb=free_gb,
+            total_gb=total_gb,
+            chronicals=chronicals,
+            backend=backend,
+            unsloth=None,
+            token_recommended_seq=token_rec,
+        )
     _ok(f"VRAM plan: seq<={max_seq} batch={batch} grad_accum={grad_accum} ({vram_reason})")
 
     char_cap = int(cfg["max_chars_per_message"]) if cfg.get("max_chars_per_message") else max_chars_for_seq(max_seq)
@@ -184,7 +271,7 @@ def run_preflight(
     _ok(f"loaded {len(raw_ds)} rows (char_cap={char_cap})")
 
     if backend == "unsloth":
-        _ok("Unsloth filters empty assistant rows at tokenize (no CPU pre-filter)")
+        _ok("Unsloth pre-tokenizes messages (TRL template + assistant_masks; unsloth-zoo#323)")
         kept = len(raw_ds)
         dropped = 0
     else:
@@ -207,12 +294,39 @@ def run_preflight(
     if backend == "unsloth":
         print("[Unsloth runtime]")
         _ok(f"model: {model_id}")
+        fa = flash_attn_available()
+        if fa:
+            _ok("flash-attn available (2048 + padding-free or BFD pack)")
+        else:
+            _warn(
+                "flash-attn not installed — seq capped, no padding-free/BFD pack. "
+                "Run: bash scripts/install-flash-attn.sh (needs ~10 GiB free VRAM at train time)"
+            )
         _ok(f"gradient_checkpointing={unsloth.get('use_gradient_checkpointing', 'unsloth')}")
         _ok(f"RSLoRA={unsloth.get('use_rslora', True)}")
         _ok(f"max_grad_norm={unsloth.get('max_grad_norm', 1.0)}")
+        _ok(f"effective_batch_target={unsloth.get('effective_batch_target', 16)}")
+        if unsloth.get("clamp_to_one_epoch", True):
+            _ok("clamp_to_one_epoch (quality — one pass unless --max-steps)")
+        if unsloth.get("eval_holdout_ratio", 0) > 0:
+            _ok(f"eval holdout {unsloth.get('eval_holdout_ratio', 0):.0%} + load_best_model_at_end")
         if unsloth.get("disable_torch_compile", True):
             _ok("UNSLOTH_COMPILE_DISABLE (stable 12GB step-0)")
-        _ok("padding-free auto (packing=false in config)")
+        from llm_train.unsloth_runtime import resolve_unsloth_runtime_flags
+
+        rt = resolve_unsloth_runtime_flags(unsloth)
+        if rt["use_padding_free"]:
+            _ok("padding-free ON (FA2 — keeps weighted sampler)")
+        elif rt["use_packing"]:
+            _ok(f"BFD pack ON (FA2, strategy={unsloth.get('packing_strategy', 'bfd')})")
+        elif not fa:
+            _ok("auto padding-free disabled (no FA2 / TRL max_length safe path)")
+        if unsloth.get("use_lora_plus", True):
+            _ok(f"LoRA+ ratio={unsloth.get('lora_plus_lr_ratio', 16)}")
+        if unsloth.get("stratified_eval_holdout", True):
+            _ok(f"stratified eval holdout {unsloth.get('eval_holdout_ratio', 0.1):.0%}")
+        if unsloth.get("activation_offloading") and fa:
+            _ok("activation_offloading ON when FA2 (promote)")
     else:
         print("[TRL packing / flash-attn]")
         fa = _flash_attn_available()
@@ -241,9 +355,12 @@ def run_preflight(
     print("[config]")
     steps_per_epoch = max(1, kept // (batch * grad_accum))
     cap = int(cfg["max_steps_cap"])
-    _ok(f"~{steps_per_epoch} steps/epoch, max_steps_cap={cap}")
-    if cap > steps_per_epoch:
-        _warn(f"cap {cap} > one epoch ({steps_per_epoch}) — multi-pass unless --max-steps overrides")
+    if backend == "unsloth" and unsloth.get("clamp_to_one_epoch", True):
+        _ok(f"~{steps_per_epoch} steps/epoch (max_steps defaults to one epoch)")
+    else:
+        _ok(f"~{steps_per_epoch} steps/epoch, max_steps_cap={cap}")
+        if cap > steps_per_epoch:
+            _warn(f"cap {cap} > one epoch ({steps_per_epoch}) — multi-pass unless --max-steps overrides")
 
     print()
     if errors:

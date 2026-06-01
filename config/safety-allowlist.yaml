@@ -1,0 +1,85 @@
+# Strings and patterns that must NOT trigger quarantine (docs, examples, tests).
+# Matched against finding detail/snippet (case-sensitive unless regex flag /i).
+# Loaded by safety_policy.py and merged with config/default.yaml → safety.
+
+exact:
+  # AWS docs / IAM examples
+  - AKIAIOSFODNN7EXAMPLE
+  - AKIAIOSFODNN7EXAMPLEKEY
+  - ASIAIOSFODNN7EXAMPLE
+  - wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+  # GitHub token docs / fixtures
+  - "ghp_1234567890123456789012345678901234567890"
+  - github_pat_11AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+  - gho_1234567890123456789012345678901234567890
+  - ghs_1234567890123456789012345678901234567890
+  # OpenAI / Anthropic / HF placeholders
+  - sk-test
+  - sk-test123456789012345678901234567890
+  - sk-proj-test123456789012345678901234567890
+  - sk-ant-api03-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+  - hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  - hf_test123456789012345678901234567890
+  # Slack / npm / Cursor / Turso doc shapes
+  - xoxb-000000000000-000000000000-XXXXXXXXXXXXXXXXXXXXXXXX
+  - npm_00000000000000000000000000000000
+  - cursor_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  - libsql://example.turso.io
+  # Generic env / config placeholders
+  - YOUR_API_KEY
+  - your-api-key-here
+  - your_api_key_here
+  - INSERT_API_KEY_HERE
+  - not-a-real-token
+  - REPLACEME
+  - changeme
+  - password123
+  - secret123
+  - dummy-secret
+  - test-secret-key
+  # Benign hosts / emails
+  - example.com
+  - example.org
+  - example.net
+  - localhost
+  - 127.0.0.1
+  - user@example.com
+  - admin@example.org
+  - jane.doe@example.com
+  - test@test.com
+  - noreply@example.com
+  # Obvious test PII (docs / fixtures)
+  - 555-555-5555
+  - 000-00-0000
+  - 123-45-6789
+  - 4111111111111111
+  - 00000000-0000-0000-0000-000000000000
+  - 11111111-1111-1111-1111-111111111111
+
+regex:
+  - "^[a-f0-9]{64}$"           # sha256 hex
+  - "^[a-f0-9]{40}$"           # git sha1
+  - "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"  # uuid
+  - "^127\\.0\\.0\\.1$"        # loopback literal
+  - "^::1$"                    # ipv6 loopback
+  - "(?i)example\\.(com|org|net|io|dev)"
+  - "(?i)localhost"
+  - "(?i)example"
+  - "(?i)placeholder"
+  - "(?i)dummy"
+  - "(?i)sample_"
+  - "(?i)xxxxxxxx"
+  - "(?i)redacted"
+  - "(?i)not[_-]?a[_-]?real"
+  - "(?i)fake[_-]?"
+  - "(?i)your[_-]?api[_-]?key"
+  - "(?i)insert[_-]?(your[_-]?)?key"
+  - "(?i)replace[_-]?me"
+  - "(?i)changeme"
+  - "(?i)todo:?\\s*set\\s"
+  - "(?i)sk-test"
+  - "(?i)sk-proj-test"
+  - "^test@test\\."
+  - "^noreply@"
+
+# If finding match is substring of allowlisted text in row, suppress (checked in code).
