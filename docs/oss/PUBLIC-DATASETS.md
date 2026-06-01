@@ -146,7 +146,7 @@ export HF_TOKEN=hf_...
 
 ## Legacy (disabled by default)
 
-Pre–Top-10 bootstrap sets — **4 IDs** in `registry.py` (`tier=legacy`), off in config:
+Pre–Top-10 sets — **4 IDs** in `registry.py` (`tier=legacy`); **enabled** in `config/default.yaml` after S10 loader audit:
 
 | ID | Repo | Notes |
 |----|------|-------|

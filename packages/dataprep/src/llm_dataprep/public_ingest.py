@@ -29,11 +29,12 @@ def ingest_one(
     replace: bool = False,
     mode: str = "fast",
     refresh_download: bool = False,
+    force: bool = False,
 ) -> tuple[str, Path | None, int]:
     cfg_root = _load_config()
     spec = get_spec(dataset_id)
     cfg_ds = (cfg_root.get("datasets") or {}).get(dataset_id) or {}
-    if cfg_ds.get("enabled") is False:
+    if cfg_ds.get("enabled") is False and not force:
         print(f"{dataset_id}: disabled in config")
         return dataset_id, None, 0
 
@@ -121,8 +122,10 @@ def main() -> None:
             for spec in list_specs()
             if cfg_sets.get(spec.dataset_id, {}).get("enabled", True)
         ]
+        explicit_ids = False
     else:
         ids = [s.strip() for s in args.datasets.split(",") if s.strip()]
+        explicit_ids = True
         for did in ids:
             get_spec(did)
 
@@ -138,6 +141,7 @@ def main() -> None:
                 replace=args.replace,
                 mode=mode,
                 refresh_download=args.refresh_download,
+                force=explicit_ids,
             )
             print(f"{_id}: {n} records → {path or '(skipped)'}")
             total += n

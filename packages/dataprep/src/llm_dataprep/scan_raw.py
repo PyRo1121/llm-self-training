@@ -19,6 +19,7 @@ from llm_dataprep.filters import (
     scan_regex,
 )
 from llm_dataprep.perf import presidio_batch_size, presidio_n_process, worker_count
+from llm_dataprep.scan_config import PresidioMode, resolve_scan_presidio_mode
 from llm_dataprep.safety_policy import (
     Severity,
     apply_policy,
@@ -94,10 +95,10 @@ def scan_file(
     *,
     use_gitleaks: bool,
     gitleaks_per_file: bool,
-    use_presidio: bool,
+    presidio_mode: PresidioMode,
     limit: int | None,
 ) -> tuple[int, int, list[dict[str, Any]], list[dict[str, Any]]]:
-    _ = gitleaks_per_file  # sidecar scan always runs per file when use_gitleaks
+    use_presidio = presidio_mode != "off"
     scanned = 0
     failed = 0
     failure_rows: list[dict[str, Any]] = []
@@ -133,15 +134,20 @@ def scan_file(
     _scan_progress(path, f"loaded {len(buffered)} rows — gitleaks…")
     gitleaks_flags: dict[int, list[SafetyFinding]] = {}
     if use_gitleaks and buffered:
-        sidecar_rows: list[tuple[int, str]] = []
-        for line_no, record in buffered:
-            if is_diff_harness(record, pol):
-                text = record.get("text") or record.get("content") or ""
-                sidecar_text = extract_added_lines(text if isinstance(text, str) else "")
-            else:
-                sidecar_text = record_combined_text(record)
-            sidecar_rows.append((line_no, sidecar_text))
-        gitleaks_flags = gitleaks_sidecar_line_flags(sidecar_rows, path)
+        if gitleaks_per_file:
+            sidecar_rows: list[tuple[int, str]] = []
+            for line_no, record in buffered:
+                if is_diff_harness(record, pol):
+                    text = record.get("text") or record.get("content") or ""
+                    sidecar_text = extract_added_lines(text if isinstance(text, str) else "")
+                else:
+                    sidecar_text = record_combined_text(record)
+                sidecar_rows.append((line_no, sidecar_text))
+            gitleaks_flags = gitleaks_sidecar_line_flags(sidecar_rows, path)
+        else:
+            from llm_dataprep.filters import gitleaks_jsonl_line_flags
+
+            gitleaks_flags = gitleaks_jsonl_line_flags(path)
     _scan_progress(path, "gitleaks done — presidio…")
 
     presidio_by_idx: dict[int, list[SafetyFinding]] = {}
@@ -158,6 +164,7 @@ def scan_file(
                 texts,
                 n_process=presidio_n_process(),
                 batch_size=presidio_batch_size(),
+                mode=presidio_mode,
             )
             for (idx, _text), pf in zip(non_diff, batches, strict=True):
                 presidio_by_idx[idx] = pf
@@ -207,14 +214,14 @@ def _failure_row(
 
 
 def _scan_file_worker(
-    payload: tuple[str, bool, bool, bool, int | None, bool],
+    payload: tuple[str, bool, bool, str, int | None, bool],
 ) -> tuple[str, int, int, list[dict[str, Any]], list[dict[str, Any]]]:
     """ProcessPoolExecutor entrypoint (must be module-level for pickling)."""
     import os
 
-    path_str, use_gitleaks, gitleaks_per_file, use_presidio, limit, file_parallel = payload
-    # Nested spaCy n_process only when multiple raw files scan concurrently (RAM safety).
-    if file_parallel:
+    path_str, use_gitleaks, gitleaks_per_file, presidio_mode, limit, file_parallel = payload
+    # Nested spaCy n_process only for full Presidio when scanning files in parallel.
+    if file_parallel and presidio_mode == "full":
         os.environ["LLM_SCAN_SUBPROCESS"] = "1"
     else:
         os.environ.pop("LLM_SCAN_SUBPROCESS", None)
@@ -222,7 +229,7 @@ def _scan_file_worker(
         Path(path_str),
         use_gitleaks=use_gitleaks,
         gitleaks_per_file=gitleaks_per_file,
-        use_presidio=use_presidio,
+        presidio_mode=presidio_mode,  # type: ignore[arg-type]
         limit=limit,
     )
     return Path(path_str).name, scanned, failed, failures, warns
@@ -251,10 +258,17 @@ def main() -> None:
     )
     parser.add_argument(
         "--gitleaks-per-file",
-        action="store_true",
-        help="Alias for --gitleaks (one sidecar scan per JSONL file)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Sidecar gitleaks per JSONL row text (default). --no-gitleaks-per-file scans raw file in-place",
     )
-    parser.add_argument("--no-presidio", action="store_true")
+    parser.add_argument("--no-presidio", action="store_true", help="Same as --presidio-mode off")
+    parser.add_argument(
+        "--presidio-mode",
+        choices=("off", "pattern", "full"),
+        default=None,
+        help="Presidio: off | pattern (no spaCy, default) | full (spaCy NER — slow)",
+    )
     parser.add_argument(
         "--out",
         type=Path,
@@ -294,9 +308,13 @@ def main() -> None:
         print(f"No files in {raw_dir} matching {args.glob}")
         return
 
-    use_gitleaks = args.gitleaks or args.gitleaks_per_file
-    gitleaks_per_file = args.gitleaks_per_file or args.gitleaks
-    use_presidio = not args.no_presidio
+    use_gitleaks = bool(args.gitleaks)
+    gitleaks_per_file = bool(args.gitleaks_per_file) if use_gitleaks else False
+    presidio_mode = resolve_scan_presidio_mode(
+        cli_no_presidio=args.no_presidio,
+        cli_mode=args.presidio_mode,
+        file_glob=args.glob,
+    )
     n_workers = worker_count("SCAN_WORKERS") if args.workers is None else max(1, args.workers)
 
     all_failures: list[dict[str, Any]] = []
@@ -305,6 +323,13 @@ def main() -> None:
     total_failed = 0
 
     file_parallel = min(n_workers, len(files)) > 1
+    if file_parallel and presidio_mode == "full":
+        print(
+            "scan-raw: full Presidio + multi-file workers — spaCy n_process=1 per worker "
+            "(use --presidio-mode pattern for parallel speed)",
+            flush=True,
+        )
+    print(f"scan-raw: presidio_mode={presidio_mode}", flush=True)
 
     if n_workers <= 1 or len(files) <= 1:
         for fpath in files:
@@ -315,7 +340,7 @@ def main() -> None:
                     str(fpath.resolve()),
                     use_gitleaks,
                     gitleaks_per_file,
-                    use_presidio,
+                    presidio_mode,
                     args.limit,
                     False,
                 )
@@ -329,9 +354,16 @@ def main() -> None:
     else:
         from concurrent.futures import ProcessPoolExecutor, as_completed
 
+        mp_note = (
+            "nested-off"
+            if file_parallel and presidio_mode == "full"
+            else "pattern-fast"
+            if presidio_mode == "pattern"
+            else "on"
+        )
         print(
             f"scan-raw: {len(files)} file(s), {n_workers} worker(s)"
-            f", presidio_mp={'nested-off' if file_parallel else 'on'}",
+            f", presidio_mp={mp_note}",
             flush=True,
         )
         payloads = [
@@ -339,7 +371,7 @@ def main() -> None:
                 str(fpath.resolve()),
                 use_gitleaks,
                 gitleaks_per_file,
-                use_presidio,
+                presidio_mode,
                 args.limit,
                 file_parallel,
             )

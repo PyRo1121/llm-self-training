@@ -14,6 +14,74 @@ USER_TYPES = frozenset({"user.message"})
 ASSISTANT_TYPES = frozenset({"assistant.message"})
 
 
+def record_from_copilot_event(
+    ev: dict[str, Any],
+    *,
+    session_id: str,
+    source_path: str,
+    line_no: int,
+    ingested_at: str,
+    source: str = "copilot",
+) -> dict[str, Any] | None:
+    """One Copilot Chronicle events.jsonl line → raw record, or None if skipped."""
+    if ev.get("ephemeral"):
+        return None
+    etype = ev.get("type")
+    data = ev.get("data") or {}
+    role = None
+    if etype in USER_TYPES:
+        role = "user"
+    elif etype in ASSISTANT_TYPES:
+        role = "assistant"
+    if not role:
+        return None
+    text = (data.get("content") or "").strip()
+    if not text or len(text) > 200_000:
+        return None
+    return {
+        "source": source,
+        "harness": "copilot",
+        "session_id": session_id,
+        "source_path": source_path,
+        "line_no": line_no,
+        "event_type": etype,
+        "role": role,
+        "text": text,
+        "ingested_at": ingested_at,
+    }
+
+
+def iter_copilot_event_lines(
+    lines: Iterator[str] | list[str],
+    *,
+    session_id: str,
+    source_path: str,
+    ingested_at: str,
+    max_lines: int | None = None,
+    source: str = "copilot",
+) -> Iterator[dict[str, Any]]:
+    for i, line in enumerate(lines, start=1):
+        if max_lines is not None and i > max_lines:
+            break
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        rec = record_from_copilot_event(
+            ev,
+            session_id=session_id,
+            source_path=source_path,
+            line_no=i,
+            ingested_at=ingested_at,
+            source=source,
+        )
+        if rec is not None:
+            yield rec
+
+
 def iter_event_files(root: Path | None = None) -> Iterator[tuple[Path, str]]:
     root = root or DEFAULT_ROOT
     if not root.is_dir():
@@ -40,39 +108,12 @@ def ingest(
     def records() -> Iterator[dict[str, Any]]:
         for path, session_id in sessions:
             with path.open(encoding="utf-8", errors="replace") as fh:
-                for i, line in enumerate(fh, start=1):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        ev = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if ev.get("ephemeral"):
-                        continue
-                    etype = ev.get("type")
-                    data = ev.get("data") or {}
-                    role = None
-                    if etype in USER_TYPES:
-                        role = "user"
-                    elif etype in ASSISTANT_TYPES:
-                        role = "assistant"
-                    if not role:
-                        continue
-                    text = (data.get("content") or "").strip()
-                    if not text or len(text) > 200_000:
-                        continue
-                    yield {
-                        "source": "copilot",
-                        "harness": "copilot",
-                        "session_id": session_id,
-                        "source_path": str(path),
-                        "line_no": i,
-                        "event_type": etype,
-                        "role": role,
-                        "text": text,
-                        "ingested_at": ingested,
-                    }
+                yield from iter_copilot_event_lines(
+                    fh,
+                    session_id=session_id,
+                    source_path=str(path),
+                    ingested_at=ingested,
+                )
 
     if not sessions:
         return None, 0

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from llm_core.yaml_config import load_yaml_config
 
 from llm_dataprep.curate_raw import _curation_for_session, chunk_messages
@@ -44,3 +46,14 @@ def test_curation_for_session_merges_personal_overrides() -> None:
     merged = _curation_for_session(rows, cfg)
     assert merged["min_messages"] == 4
     assert merged["min_message_chars"] == 8
+
+
+def test_iter_raw_records_counts_parse_errors(tmp_path: Path) -> None:
+    from llm_dataprep.curate_raw import iter_raw_records
+
+    raw = tmp_path / "bad.jsonl"
+    raw.write_text('{"ok":true}\nnot-json\n{"also":true}\n', encoding="utf-8")
+    stats: dict[str, int] = {}
+    rows = list(iter_raw_records([raw], stats=stats))
+    assert len(rows) == 2
+    assert stats.get("parse_errors") == 1

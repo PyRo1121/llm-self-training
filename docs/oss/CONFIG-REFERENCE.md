@@ -181,7 +181,7 @@ eval:
   regression_floor: 0.05
 ```
 
-Used by PLAN/loop design; not yet wired in `run_eval.py`.
+Used by PLAN/loop design; `run_eval --train-run` registers suite rows via `register_benchmark_run`.
 
 ## `public_datasets`
 

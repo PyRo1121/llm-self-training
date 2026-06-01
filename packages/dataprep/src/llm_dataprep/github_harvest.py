@@ -1072,6 +1072,28 @@ def _text_from_codex_user_message(payload: dict[str, Any]) -> str:
     return m.group(1).strip() if m else text
 
 
+def _codex_event_user_texts(lines: list[str], *, max_lines: int) -> frozenset[str]:
+    """User texts from event_msg lines — used to skip duplicate response_item user turns."""
+    texts: set[str] = set()
+    for line in lines[:max_lines]:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "event_msg":
+            continue
+        payload = obj.get("payload") or {}
+        if not isinstance(payload, dict) or payload.get("type") != "user_message":
+            continue
+        msg = payload.get("message")
+        if isinstance(msg, str) and msg.strip():
+            texts.add(msg.strip())
+    return frozenset(texts)
+
+
 def _parse_codex_lines(
     lines: list[str],
     *,
@@ -1082,6 +1104,7 @@ def _parse_codex_lines(
     from llm_dataprep.codex_sessions import SKIP_TYPES, _text_from_codex_content
 
     session_id = _codex_session_id_from_path(hit.path)
+    event_user_texts = _codex_event_user_texts(lines, max_lines=max_lines)
     for i, line in enumerate(lines[:max_lines], start=1):
         line = line.strip()
         if not line:
@@ -1113,6 +1136,8 @@ def _parse_codex_lines(
             if not isinstance(content, list):
                 continue
             text = _text_from_codex_content(content)
+            if role in ("user", "developer") and text in event_user_texts:
+                continue
         else:
             continue
         if not text or len(text) > 200_000:
@@ -1268,41 +1293,17 @@ def _parse_copilot_lines(
     max_lines: int,
     ingested_at: str,
 ) -> Iterator[dict[str, Any]]:
-    from llm_dataprep.copilot_cli import ASSISTANT_TYPES, USER_TYPES
+    from llm_dataprep.copilot_cli import iter_copilot_event_lines
 
     session_id = Path(hit.path).parent.name or hit.sha[:12]
-    for i, line in enumerate(lines[:max_lines], start=1):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            ev = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if ev.get("ephemeral"):
-            continue
-        etype = ev.get("type")
-        data = ev.get("data") or {}
-        role = None
-        if etype in USER_TYPES:
-            role = "user"
-        elif etype in ASSISTANT_TYPES:
-            role = "assistant"
-        if not role:
-            continue
-        text = (data.get("content") or "").strip()
-        if not text or len(text) > 200_000:
-            continue
-        rec = {
-            "harness": "copilot",
-            "session_id": session_id,
-            "source_path": f"github:{hit.repo_full_name}/{hit.path}",
-            "line_no": i,
-            "event_type": etype,
-            "role": role,
-            "text": text,
-            "ingested_at": ingested_at,
-        }
+    source_path = f"github:{hit.repo_full_name}/{hit.path}"
+    for rec in iter_copilot_event_lines(
+        lines[:max_lines],
+        session_id=session_id,
+        source_path=source_path,
+        ingested_at=ingested_at,
+        source="github_public",
+    ):
         rec.update(_provenance(hit))
         yield rec
 
@@ -1701,6 +1702,9 @@ def _parse_opencode_part_json(
         return
     if obj.get("type") != "text":
         return
+    role = obj.get("role")
+    if role not in ("user", "assistant"):
+        return
     body = (obj.get("text") or "").strip()
     if not body or len(body) > 200_000:
         return
@@ -1710,7 +1714,7 @@ def _parse_opencode_part_json(
         "session_id": session_id,
         "source_path": f"github:{hit.repo_full_name}/{hit.path}",
         "line_no": 1,
-        "role": "assistant",
+        "role": role,
         "text": body,
         "ingested_at": ingested_at,
     }

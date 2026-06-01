@@ -52,11 +52,25 @@ training_mix:
   public_cap: null
 
 public_datasets:
+  enabled: true
   ingest:
     download_workers: 20
     convert_workers: 12
     write_buffer_rows: 1000
   datasets:
+    # bootstrap (--ingest-mode bootstrap in scripts/cloud/train-cloud.sh)
+    swe_next:
+      enabled: true
+      max_rows: null
+    cooper_qwen9b_coop_claude:
+      enabled: true
+      max_rows: null
+    nemotron_opencode:
+      enabled: true
+      max_rows: null
+    agentic_sft_new:
+      enabled: true
+      max_rows: null
     swe_zero_12m:
       enabled: true
       max_rows: null

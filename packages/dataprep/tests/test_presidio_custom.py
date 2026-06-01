@@ -7,6 +7,7 @@ import pytest
 from llm_dataprep.presidio_custom import (
     CUSTOM_ENTITIES,
     build_custom_recognizers,
+    clear_analyzer_engine_cache,
     create_analyzer_engine,
     register_custom_recognizers,
 )
@@ -50,7 +51,7 @@ def test_register_custom_recognizers() -> None:
 
 
 def test_create_analyzer_engine_registers_custom(monkeypatch: pytest.MonkeyPatch) -> None:
-    create_analyzer_engine.cache_clear()
+    clear_analyzer_engine_cache()
 
     class _Registry:
         def __init__(self) -> None:
@@ -64,5 +65,5 @@ def test_create_analyzer_engine_registers_custom(monkeypatch: pytest.MonkeyPatch
             self.registry = _Registry()
 
     monkeypatch.setattr("presidio_analyzer.AnalyzerEngine", _Engine)
-    engine = create_analyzer_engine()
+    engine = create_analyzer_engine(mode="full")
     assert set(engine.registry.added) == set(CUSTOM_ENTITIES)

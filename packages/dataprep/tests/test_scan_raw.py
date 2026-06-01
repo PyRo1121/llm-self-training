@@ -46,7 +46,7 @@ def test_parse_error_quarantined(tmp_path: Path) -> None:
         raw,
         use_gitleaks=False,
         gitleaks_per_file=False,
-        use_presidio=False,
+        presidio_mode="off",
         limit=None,
     )
     assert scanned == 1
@@ -69,7 +69,7 @@ def test_scan_file_respects_limit(tmp_path: Path) -> None:
         raw,
         use_gitleaks=False,
         gitleaks_per_file=False,
-        use_presidio=False,
+        presidio_mode="off",
         limit=2,
     )
     assert scanned == 2
@@ -94,6 +94,7 @@ def test_presidio_batch_findings_applied(
         *,
         n_process: int | None = None,
         batch_size: int | None = None,
+        mode: str = "pattern",
     ) -> list[list[SafetyFinding]]:
         assert texts == [text]
         return [
@@ -111,7 +112,7 @@ def test_presidio_batch_findings_applied(
         raw,
         use_gitleaks=False,
         gitleaks_per_file=False,
-        use_presidio=True,
+        presidio_mode="pattern",
         limit=None,
     )
     assert scanned == 1
@@ -137,6 +138,7 @@ def test_presidio_skips_diff_harness_rows(
         *,
         n_process: int | None = None,
         batch_size: int | None = None,
+        mode: str = "pattern",
     ) -> list[list[SafetyFinding]]:
         calls.append(texts)
         return [[] for _ in texts]
@@ -146,7 +148,7 @@ def test_presidio_skips_diff_harness_rows(
         raw,
         use_gitleaks=False,
         gitleaks_per_file=False,
-        use_presidio=True,
+        presidio_mode="pattern",
         limit=None,
     )
     assert scanned == 1
@@ -156,10 +158,10 @@ def test_presidio_skips_diff_harness_rows(
     assert calls == []
 
 
-def test_scan_file_worker_sets_subprocess_env(tmp_path: Path) -> None:
+def test_scan_file_worker_sets_subprocess_env_full_mode(tmp_path: Path) -> None:
     raw = tmp_path / "clean.jsonl"
     raw.write_text(json.dumps({"text": "hello"}) + "\n", encoding="utf-8")
-    payload = (str(raw.resolve()), False, False, False, None, True)
+    payload = (str(raw.resolve()), False, False, "full", None, True)
     name, scanned, failed, failures, warns = _scan_file_worker(payload)
     assert name == "clean.jsonl"
     assert scanned == 1
@@ -168,7 +170,11 @@ def test_scan_file_worker_sets_subprocess_env(tmp_path: Path) -> None:
     assert not warns
     assert os.environ.get("LLM_SCAN_SUBPROCESS") == "1"
 
-    payload_serial = (str(raw.resolve()), False, False, False, None, False)
+    payload_pattern = (str(raw.resolve()), False, False, "pattern", None, True)
+    _scan_file_worker(payload_pattern)
+    assert "LLM_SCAN_SUBPROCESS" not in os.environ
+
+    payload_serial = (str(raw.resolve()), False, False, "full", None, False)
     _scan_file_worker(payload_serial)
     assert "LLM_SCAN_SUBPROCESS" not in os.environ
 
@@ -320,7 +326,8 @@ def test_main_parallel_workers(
     main()
     out = capsys.readouterr().out
     assert "scan-raw: 2 file(s), 2 worker(s)" in out
-    assert "presidio_mp=nested-off" in out
+    assert "scan-raw: presidio_mode=off" in out
+    assert "presidio_mp=on" in out
     assert "row0.jsonl:" in out
     assert "row1.jsonl:" in out
     assert "Total:" in out

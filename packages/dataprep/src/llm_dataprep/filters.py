@@ -117,26 +117,7 @@ def scan_gitleaks_dir(
         ]
     if not report.is_file():
         return []
-    try:
-        data = json.loads(report.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return []
-    items = data if isinstance(data, list) else data.get("findings") or []
-    findings: list[SafetyFinding] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        rule = item.get("RuleID") or item.get("rule") or "secret"
-        match = item.get("Match") or item.get("match") or ""
-        fname = item.get("File") or ""
-        findings.append(
-            SafetyFinding(
-                source="gitleaks",
-                kind=str(rule),
-                detail=f"{fname}: {str(match)[:160]}",
-            )
-        )
-    return findings
+    return _parse_gitleaks_report(report)
 
 
 def _gitleaks_scratch_dir() -> Path:
@@ -286,7 +267,15 @@ def gitleaks_jsonl_line_flags(
         try:
             subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s, check=False)
         except (subprocess.TimeoutExpired, OSError):
-            return {}
+            return {
+                1: [
+                    SafetyFinding(
+                        source="gitleaks",
+                        kind="scan_error",
+                        detail="gitleaks dir scan failed or timed out",
+                    )
+                ]
+            }
 
         if not report.is_file():
             return flags
@@ -335,7 +324,6 @@ def scan_gitleaks(text: str, *, timeout_s: float = 120.0) -> list[SafetyFinding]
     if not exe:
         return []
 
-    findings: list[SafetyFinding] = []
     with tempfile.TemporaryDirectory(prefix="gitleaks-scan-") as tmp:
         path = Path(tmp) / "content.txt"
         path.write_text(text, encoding="utf-8")
@@ -369,48 +357,39 @@ def scan_gitleaks(text: str, *, timeout_s: float = 120.0) -> list[SafetyFinding]
             ]
 
         if not report.is_file():
-            return findings
+            return []
 
-        try:
-            data = json.loads(report.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return findings
-
-        items = data if isinstance(data, list) else data.get("findings") or []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            rule = item.get("RuleID") or item.get("rule") or "secret"
-            match = item.get("Match") or item.get("match") or ""
-            findings.append(
-                SafetyFinding(
-                    source="gitleaks",
-                    kind=str(rule),
-                    detail=str(match)[:200],
-                )
-            )
-    return findings
+        return _parse_gitleaks_report(report)
 
 
-_analyzer: Any | None = None
-_analyzer_failed = False
+_analyzers: dict[str, Any] = {}
+_analyzer_failed_modes: set[str] = set()
+_batch_engines: dict[str, Any] = {}
+_batch_engine_failed_modes: set[str] = set()
 
 
-def scan_presidio(text: str, *, language: str = "en") -> list[SafetyFinding]:
-    global _analyzer, _analyzer_failed
-    if _analyzer_failed:
-        return []
-    if _analyzer is None:
+def _get_analyzer(*, mode: str = "full") -> Any | None:
+    engine_mode = "pattern" if mode == "pattern" else "full"
+    if engine_mode in _analyzer_failed_modes:
+        return None
+    if engine_mode not in _analyzers:
         try:
             from llm_dataprep.presidio_custom import create_analyzer_engine
 
-            _analyzer = create_analyzer_engine()
+            _analyzers[engine_mode] = create_analyzer_engine(mode=engine_mode)  # type: ignore[arg-type]
         except Exception:
-            _analyzer_failed = True
-            return []
+            _analyzer_failed_modes.add(engine_mode)
+            return None
+    return _analyzers[engine_mode]
+
+
+def scan_presidio(text: str, *, language: str = "en", mode: str = "full") -> list[SafetyFinding]:
+    analyzer = _get_analyzer(mode=mode)
+    if analyzer is None:
+        return []
 
     try:
-        results = _analyzer.analyze(text=text, language=language)
+        results = analyzer.analyze(text=text, language=language)
     except Exception:
         return [
             SafetyFinding(
@@ -432,7 +411,13 @@ def _presidio_results_to_findings(results: Any) -> list[SafetyFinding]:
         entity = str(r.entity_type)
         if entity not in pol.presidio_entities:
             continue
-        score = float(r.score)
+        raw_score = getattr(r, "score", None)
+        if raw_score is None:
+            continue
+        try:
+            score = float(raw_score)
+        except (TypeError, ValueError):
+            continue
         min_score = pol.presidio_min_score.get(entity, 0.9)
         if score < min_score:
             continue
@@ -448,47 +433,61 @@ def _presidio_results_to_findings(results: Any) -> list[SafetyFinding]:
     return findings
 
 
-_batch_engine: Any | None = None
-_batch_engine_failed = False
-
-
 def scan_presidio_batch(
     texts: list[str],
     *,
     language: str = "en",
     n_process: int | None = None,
     batch_size: int | None = None,
+    mode: str = "full",
 ) -> list[list[SafetyFinding]]:
-    """Batch PII scan (Presidio BatchAnalyzerEngine + spaCy n_process)."""
+    """Batch PII scan — pattern mode avoids spaCy; full uses BatchAnalyzerEngine."""
     import os
 
     from llm_dataprep.perf import presidio_batch_size, presidio_n_process
 
     if not texts:
         return []
+
+    engine_mode = "pattern" if mode == "pattern" else "full"
+    if engine_mode == "pattern":
+        analyzer = _get_analyzer(mode=engine_mode)
+        if analyzer is None:
+            return [[] for _ in texts]
+        out: list[list[SafetyFinding]] = []
+        for text in texts:
+            try:
+                results = analyzer.analyze(text=text, language=language)
+            except Exception:
+                out.append([])
+            else:
+                out.append(_presidio_results_to_findings(results))
+        return out
+
     n_proc = presidio_n_process() if n_process is None else max(1, n_process)
-    # File-parallel scan workers must not spawn nested spaCy multiprocessing.
+    # Nested spaCy n_process only when multiple raw files scan concurrently in full mode.
     if os.environ.get("LLM_SCAN_SUBPROCESS") == "1":
         n_proc = 1
     bsize = presidio_batch_size() if batch_size is None else max(1, batch_size)
 
-    global _batch_engine, _batch_engine_failed
-    if _batch_engine_failed:
-        return [scan_presidio(t, language=language) for t in texts]
+    if engine_mode in _batch_engine_failed_modes:
+        return [scan_presidio(t, language=language, mode=engine_mode) for t in texts]
 
-    if _batch_engine is None:
+    if engine_mode not in _batch_engines:
         try:
             from presidio_analyzer import BatchAnalyzerEngine
 
-            from llm_dataprep.presidio_custom import create_analyzer_engine
-
-            _batch_engine = BatchAnalyzerEngine(analyzer_engine=create_analyzer_engine())
+            analyzer = _get_analyzer(mode=engine_mode)
+            if analyzer is None:
+                _batch_engine_failed_modes.add(engine_mode)
+                return [scan_presidio(t, language=language, mode=engine_mode) for t in texts]
+            _batch_engines[engine_mode] = BatchAnalyzerEngine(analyzer_engine=analyzer)
         except Exception:
-            _batch_engine_failed = True
-            return [scan_presidio(t, language=language) for t in texts]
+            _batch_engine_failed_modes.add(engine_mode)
+            return [scan_presidio(t, language=language, mode=engine_mode) for t in texts]
 
     try:
-        raw = _batch_engine.analyze_iterator(
+        raw = _batch_engines[engine_mode].analyze_iterator(
             texts,
             language=language,
             n_process=n_proc,
@@ -496,7 +495,7 @@ def scan_presidio_batch(
         )
         return [_presidio_results_to_findings(r) for r in raw]
     except Exception:
-        return [scan_presidio(t, language=language) for t in texts]
+        return [scan_presidio(t, language=language, mode=engine_mode) for t in texts]
 
 
 def _safety_report_after_policy(findings: list[SafetyFinding], text: str) -> SafetyReport:

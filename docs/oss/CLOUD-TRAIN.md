@@ -125,7 +125,7 @@ ollama create pyro-coder:7b -f exports/pyro-coder-h100-v1/Modelfile
 
 | Stage | What happens |
 |-------|----------------|
-| **Raw ingest** | `swe_zero_12m`, `codex_7m`, etc. can be **hundreds of GB** — your 2.8 TB Jarvis disk fits it |
+| **Raw ingest** | `swe_zero_12m`, `swe_zero_openhands`, bootstrap sets (`swe_next`, `nemotron_opencode`, …) can be **hundreds of GB** — large Jarvis disks fit it |
 | **Curate** | Tier-1 + safety filters shrink train rows dramatically |
 | **Train manifest** | 75% personal / 25% public from warehouse |
 | **One epoch steps** | `train_rows / 16` — can be **days** if millions of tier-1 rows |

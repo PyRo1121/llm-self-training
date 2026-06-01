@@ -165,6 +165,12 @@ def try_skip_ingest(
     if not _hub_not_newer_than_local(hub_meta.get("last_modified"), local_time):
         return False, None, 0, ""
 
+    record_count = 0
+    with raw_path.open(encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if line.strip():
+                record_count += 1
+
     write_ingest_state(
         cache_dir,
         {
@@ -177,7 +183,7 @@ def try_skip_ingest(
             ),
             "ingested_at": raw_time.isoformat(),
             "raw_path": str(raw_path.resolve()),
-            "record_count": None,
+            "record_count": record_count,
             "loader_fingerprint": fingerprint,
             "bootstrapped_from_legacy": True,
         },
@@ -191,7 +197,7 @@ def try_skip_ingest(
         f"up to date — Hub lastModified {hub_s} ≤ local files "
         f"({raw_path.name}); skipping download + convert"
     )
-    return True, raw_path, 0, msg
+    return True, raw_path, record_count, msg
 
 
 def record_ingest_complete(

@@ -67,3 +67,21 @@ def test_gitleaks_sidecar_line_flags_timeout_surfaces_scan_error(
     assert len(out[7]) == 1
     assert out[7][0].kind == "scan_error"
     assert out[7][0].source == "gitleaks"
+
+
+def test_gitleaks_jsonl_line_flags_timeout_surfaces_scan_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from llm_dataprep.filters import gitleaks_jsonl_line_flags
+
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/gitleaks")
+
+    def _timeout(*_a: object, **_k: object) -> None:
+        raise subprocess.TimeoutExpired(cmd=["gitleaks"], timeout=0.001)
+
+    monkeypatch.setattr("subprocess.run", _timeout)
+    raw = tmp_path / "big.jsonl"
+    raw.write_text('{"text":"hello"}\n', encoding="utf-8")
+    out = gitleaks_jsonl_line_flags(raw, timeout_s=0.001)
+    assert 1 in out
+    assert out[1][0].kind == "scan_error"

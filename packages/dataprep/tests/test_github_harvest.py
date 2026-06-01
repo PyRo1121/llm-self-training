@@ -20,7 +20,9 @@ from llm_dataprep.github_harvest import (
     should_accept_path,
     should_skip_path,
     should_skip_repo,
+    _flush_pending_downloads_batch,
 )
+from llm_dataprep.github_harvest_cache import HarvestCache
 
 
 def _hit(path: str, *, qid: str = "test") -> CodeHit:
@@ -54,6 +56,14 @@ def test_detect_harness_paths() -> None:
     assert detect_harness(".config/tokscale/trae-cache/sessions/s1.json") == "trae"
     assert detect_harness(".qwen/projects/p/chats/session-1.jsonl") == "qwen_cli"
     assert detect_harness("misc/transcripts/foo.jsonl", "cursor") == "cursor"
+
+
+def test_detect_harness_mux_aider_kiro_continue() -> None:
+    assert detect_harness(".mux/sessions/proj/sess.jsonl") == "mux"
+    assert detect_harness("project/.aider.chat.history.md") == "aider"
+    assert detect_harness(".kiro/sessions/uuid/thread.jsonl") == "kiro"
+    assert detect_harness(".continue/sessions/sess-abc.json") == "continue"
+    assert detect_harness(".continue/projects/myproj/session.json") == "continue"
 
 
 def test_detect_harness_amp() -> None:
@@ -622,7 +632,13 @@ def test_parse_opencode_session_messages_fixture() -> None:
 
 def test_parse_opencode_storage_part_json() -> None:
     hit = _hit(".local/share/opencode/storage/part/sess123/part-uuid.json")
-    blob = json.dumps({"type": "text", "text": "OpenCode split part text for harvest coverage."})
+    blob = json.dumps(
+        {
+            "type": "text",
+            "role": "assistant",
+            "text": "OpenCode split part text for harvest coverage.",
+        }
+    )
     recs = list(parse_blob_text(hit, blob, harness_hint="opencode", max_lines=100))
     assert len(recs) == 1
     assert recs[0]["role"] == "assistant"
@@ -793,6 +809,98 @@ def test_run_harvest_dry_run_skips_download(tmp_path: Path, monkeypatch: pytest.
     fake_client.fetch_raw_file.assert_not_called()
 
 
+def test_flush_pending_downloads_batch_rest_ingest(tmp_path: Path) -> None:
+    cfg = HarvestConfig(
+        state_path=tmp_path / "state.json",
+        raw_prefix="public-github-sessions-test",
+        download_mode="rest",
+        max_file_bytes=1_000_000,
+    )
+    cache = HarvestCache(cfg.state_path)
+    hit = _hit("misc/transcripts/chat.jsonl")
+    key = f"{hit.repo_full_name}:{hit.path}:{hit.sha}"
+    qspec = {"harness_hint": "generic"}
+    pending = [(hit, key, qspec, "q1", "pat")]
+    stats: dict[str, int] = {
+        "files_fetched": 0,
+        "files_skipped": 0,
+        "records": 0,
+        "files_rejected_content": 0,
+        "rest_blobs": 0,
+    }
+    record_buf: list[dict] = []
+    flushed: list[int] = []
+
+    def flush_records() -> None:
+        flushed.append(len(record_buf))
+        record_buf.clear()
+
+    client = MagicMock()
+    client.fetch_file_bytes.return_value = b'{"role":"user","text":"hello from batch"}\n'
+
+    _flush_pending_downloads_batch(
+        pending,
+        client=client,
+        gql=None,
+        cfg=cfg,
+        cache=cache,
+        stats=stats,
+        record_buf=record_buf,
+        flush_records=flush_records,
+        dry_run=False,
+    )
+
+    assert stats["files_fetched"] == 1
+    assert stats["records"] == 1
+    assert stats["rest_blobs"] == 1
+    assert flushed == [1]
+    client.fetch_file_bytes.assert_called_once()
+
+
+def test_run_harvest_ingests_downloaded_blob(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    for key in (
+        "GITHUB_APP_CLIENT_ID",
+        "GITHUB_APP_INSTALLATION_ID",
+        "GITHUB_APP_PRIVATE_KEY",
+        "GITHUB_APP_PRIVATE_KEY_PATH",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    cfg = HarvestConfig(
+        max_files_per_run=5,
+        state_path=tmp_path / "state.json",
+        raw_prefix="public-github-sessions-test",
+        download_mode="rest",
+        queries=(
+            {
+                "id": "q1",
+                "q": "extension:jsonl",
+                "harness_hint": "generic",
+                "require_path_substrings": ("transcripts/",),
+            },
+        ),
+    )
+    hit = _hit("misc/transcripts/chat.jsonl", qid="q1")
+    fake_client = MagicMock()
+    fake_client.fetch_file_bytes.return_value = (
+        b'{"role":"user","text":"harvested session line"}\n'
+    )
+
+    with patch("llm_dataprep.github_harvest.iter_code_search_hits", return_value=[hit]):
+        with patch("llm_dataprep.github_harvest._github_token", return_value="tok"):
+            with patch("llm_dataprep.github_harvest.GitHubClient", return_value=fake_client):
+                with patch(
+                    "llm_dataprep.github_harvest.append_records_buffered",
+                    return_value=1,
+                ) as append_mock:
+                    stats = run_harvest(cfg, dry_run=False, reset_state=True)
+
+    assert stats["files_fetched"] == 1
+    assert stats["records"] == 1
+    fake_client.fetch_file_bytes.assert_called_once()
+    append_mock.assert_called()
+
+
 def test_codex_event_msg_user() -> None:
     session_uuid = "019d4b4c-3972-72b2-888f-89d893b08a55"
     hit = _hit(
@@ -830,6 +938,49 @@ def test_codex_event_msg_user() -> None:
     assert "npm install -g" in recs[0]["text"]
     assert recs[1]["role"] == "assistant"
     assert looks_like_chat_blob(blob, "codex")
+
+
+def test_codex_skips_duplicate_user_in_response_item_when_event_msg_present() -> None:
+    session_uuid = "019d4b4c-3972-72b2-888f-89d893b08a55"
+    hit = _hit(
+        f".codex/sessions/2026/04/01/rollout-2026-04-01T18-06-19-{session_uuid}.jsonl"
+    )
+    user_text = "Same user turn in event_msg and response_item."
+    blob = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": user_text},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": user_text}],
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Only one assistant reply."}],
+                    },
+                }
+            ),
+        ]
+    )
+    recs = list(parse_blob_text(hit, blob, harness_hint="codex", max_lines=100))
+    assert len(recs) == 2
+    assert [r["role"] for r in recs] == ["user", "assistant"]
+    assert recs[0]["record_type"] == "event_msg"
+    assert recs[1]["text"] == "Only one assistant reply."
 
 
 def test_pi_custom_message() -> None:

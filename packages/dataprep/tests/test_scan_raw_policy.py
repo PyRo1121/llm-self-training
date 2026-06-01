@@ -21,7 +21,7 @@ def test_block_finding_quarantined(tmp_path: Path) -> None:
         raw,
         use_gitleaks=False,
         gitleaks_per_file=False,
-        use_presidio=False,
+        presidio_mode="off",
         limit=None,
     )
     assert scanned == 1
@@ -43,7 +43,7 @@ def test_warn_only_not_quarantined(tmp_path: Path) -> None:
         raw,
         use_gitleaks=False,
         gitleaks_per_file=False,
-        use_presidio=False,
+        presidio_mode="off",
         limit=None,
     )
     assert scanned == 1
@@ -72,7 +72,7 @@ def test_diff_harness_uses_scan_diff_record(tmp_path: Path, monkeypatch: pytest.
         raw,
         use_gitleaks=False,
         gitleaks_per_file=False,
-        use_presidio=False,
+        presidio_mode="off",
         limit=None,
     )
     assert scanned == 1
@@ -105,7 +105,7 @@ def test_gitleaks_diff_harness_uses_added_lines_sidecar(
         raw,
         use_gitleaks=True,
         gitleaks_per_file=True,
-        use_presidio=False,
+        presidio_mode="off",
         limit=None,
     )
     assert scanned == 1
@@ -127,12 +127,36 @@ def test_gitleaks_uses_sidecar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         raw,
         use_gitleaks=True,
         gitleaks_per_file=True,
-        use_presidio=False,
+        presidio_mode="off",
         limit=None,
     )
     assert scanned == 1
     assert calls
     assert calls[0][0] == raw
     assert calls[0][1] == [(1, "clean")]
+    assert failed == 1
+    assert failures[0]["block_count"] == 1
+
+
+def test_gitleaks_in_place_when_not_per_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    raw = tmp_path / "inplace.jsonl"
+    raw.write_text('{"text":"clean"}\n', encoding="utf-8")
+    calls: list[Path] = []
+
+    def _fake(path: Path, **kwargs: object) -> dict:
+        calls.append(path)
+        return {1: [SafetyFinding(source="gitleaks", kind="test-rule", detail="match")]}
+
+    monkeypatch.setattr("llm_dataprep.scan_raw.gitleaks_sidecar_line_flags", lambda *a, **k: (_ for _ in ()).throw(AssertionError("sidecar should not run")))
+    monkeypatch.setattr("llm_dataprep.filters.gitleaks_jsonl_line_flags", _fake)
+    scanned, failed, failures, _warns = scan_file(
+        raw,
+        use_gitleaks=True,
+        gitleaks_per_file=False,
+        presidio_mode="off",
+        limit=None,
+    )
+    assert scanned == 1
+    assert calls == [raw]
     assert failed == 1
     assert failures[0]["block_count"] == 1

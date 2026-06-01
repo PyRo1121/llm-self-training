@@ -16,6 +16,7 @@ from llm_core import data_dir
 from llm_core.yaml_config import load_yaml_config
 from llm_dataprep.filters import SafetyFinding, SafetyReport, scan_presidio_batch, scan_regex
 from llm_dataprep.perf import presidio_n_process, presidio_session_batch, worker_count
+from llm_dataprep.scan_config import PresidioMode, resolve_curate_presidio_mode
 from llm_dataprep.safety_policy import (
     Severity,
     apply_policy,
@@ -93,7 +94,11 @@ def _public_meta_defaults(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {}
 
 
-def iter_raw_records(paths: list[Path]) -> Iterator[dict[str, Any]]:
+def iter_raw_records(
+    paths: list[Path],
+    *,
+    stats: dict[str, int] | None = None,
+) -> Iterator[dict[str, Any]]:
     for path in paths:
         with path.open(encoding="utf-8", errors="replace") as fh:
             for line_no, line in enumerate(fh, start=1):
@@ -103,6 +108,8 @@ def iter_raw_records(paths: list[Path]) -> Iterator[dict[str, Any]]:
                 try:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
+                    if stats is not None:
+                        stats["parse_errors"] = stats.get("parse_errors", 0) + 1
                     continue
                 if isinstance(rec, dict):
                     rec["_source_file"] = str(path)
@@ -307,7 +314,7 @@ def curate_session(
     cfg: dict[str, Any],
     *,
     use_gitleaks: bool,
-    use_presidio: bool,
+    presidio_mode: PresidioMode,
 ) -> list[dict[str, Any]]:
     cfg = _curation_for_session(rows, cfg)
     windows = _session_windows(rows, cfg)
@@ -315,6 +322,7 @@ def curate_session(
         return []
 
     filter_secrets = bool(cfg.get("filter_secrets_and_pii", True))
+    use_presidio = presidio_mode != "off"
     out: list[dict[str, Any]] = []
     for chunk_idx, window in enumerate(windows):
         combined = "\n\n".join(m["content"] for m in window)
@@ -323,7 +331,9 @@ def curate_session(
             from llm_dataprep.filters import scan_presidio
 
             scan_text = _presidio_scan_text(rows, combined)
-            presidio = scan_presidio(scan_text) if scan_text.strip() else []
+            presidio = (
+                scan_presidio(scan_text, mode=presidio_mode) if scan_text.strip() else []
+            )
         safety, sevs = _safety_for_window(
             rows,
             combined,
@@ -351,11 +361,12 @@ def _curate_one_path(
     cfg: dict[str, Any],
     failure_keys: set[tuple[str, int]],
     use_gitleaks: bool,
-    use_presidio: bool,
+    presidio_mode: PresidioMode,
     tier: int,
     out_fh: TextIO,
 ) -> tuple[int, int, int, dict[int, int], int]:
     """Curate a single raw JSONL file into out_fh."""
+    use_presidio = presidio_mode != "off"
     total_sessions = 0
     skipped_sessions = 0
     written = 0
@@ -364,7 +375,8 @@ def _curate_one_path(
 
     by_session: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     file_rows = 0
-    for rec in iter_raw_records([path]):
+    load_stats: dict[str, int] = {}
+    for rec in iter_raw_records([path], stats=load_stats):
         file_rows += 1
         if rec.get("stack_index"):
             stack_index_rows += 1
@@ -394,6 +406,7 @@ def _curate_one_path(
                     batch_inputs,
                     n_process=presidio_n_process(),
                     batch_size=max(16, presidio_session_batch() // 2),
+                    mode=presidio_mode,
                 )
                 it = iter(raw_batches)
                 presidio_batches = [
@@ -445,7 +458,7 @@ def _curate_one_path(
                 rows,
                 cfg,
                 use_gitleaks=True,
-                use_presidio=use_presidio,
+                presidio_mode=presidio_mode,
             ):
                 t = int(curated["meta"].get("train_tier", 0))
                 tier_counts[t] += 1
@@ -464,6 +477,12 @@ def _curate_one_path(
     _flush_pending()
 
     file_written = written
+    parse_errors = load_stats.get("parse_errors", 0)
+    if parse_errors:
+        print(
+            f"curate-raw: {path.name} — skipped {parse_errors} malformed JSONL line(s)",
+            flush=True,
+        )
     print(
         f"curate-raw: {path.name} — {file_rows} raw rows, "
         f"{len(by_session)} sessions → {file_written} tier-{tier} examples",
@@ -472,8 +491,8 @@ def _curate_one_path(
     return written, total_sessions, skipped_sessions, dict(tier_counts), stack_index_rows
 
 
-def _curate_file_worker(payload: tuple[str, dict, list, bool, bool, int, str]) -> dict[str, Any]:
-    path_str, cfg, failure_list, use_gitleaks, use_presidio, tier, out_part = payload
+def _curate_file_worker(payload: tuple[str, dict, list, bool, str, int, str]) -> dict[str, Any]:
+    path_str, cfg, failure_list, use_gitleaks, presidio_mode, tier, out_part = payload
     failure_keys = set((str(a), int(b)) for a, b in failure_list)
     with Path(out_part).open("w", encoding="utf-8") as out_fh:
         written, total_sessions, skipped_sessions, tier_counts, stack_index_rows = _curate_one_path(
@@ -481,7 +500,7 @@ def _curate_file_worker(payload: tuple[str, dict, list, bool, bool, int, str]) -
             cfg=cfg,
             failure_keys=failure_keys,
             use_gitleaks=use_gitleaks,
-            use_presidio=use_presidio,
+            presidio_mode=presidio_mode,  # type: ignore[arg-type]
             tier=tier,
             out_fh=out_fh,
         )
@@ -502,7 +521,7 @@ def _curate_paths(
     cfg: dict[str, Any],
     failure_keys: set[tuple[str, int]],
     use_gitleaks: bool,
-    use_presidio: bool,
+    presidio_mode: PresidioMode,
     tier: int,
     out_fh: Any,
     workers: int = 1,
@@ -520,7 +539,7 @@ def _curate_paths(
                 cfg=cfg,
                 failure_keys=failure_keys,
                 use_gitleaks=use_gitleaks,
-                use_presidio=use_presidio,
+                presidio_mode=presidio_mode,
                 tier=tier,
                 out_fh=out_fh,
             )
@@ -543,7 +562,15 @@ def _curate_paths(
             part = tmp_path / f"part_{i:04d}.jsonl"
             parts.append(part)
             payloads.append(
-                (str(path.resolve()), cfg, failure_list, use_gitleaks, use_presidio, tier, str(part))
+                (
+                    str(path.resolve()),
+                    cfg,
+                    failure_list,
+                    use_gitleaks,
+                    presidio_mode,
+                    tier,
+                    str(part),
+                )
             )
         with ProcessPoolExecutor(max_workers=min(workers, len(paths))) as pool:
             futures = [pool.submit(_curate_file_worker, p) for p in payloads]
@@ -621,7 +648,13 @@ def main() -> None:
         action="store_true",
         help="Deprecated alias — gitleaks off by default in curate",
     )
-    parser.add_argument("--no-presidio", action="store_true")
+    parser.add_argument("--no-presidio", action="store_true", help="Same as --presidio-mode off")
+    parser.add_argument(
+        "--presidio-mode",
+        choices=("off", "pattern", "full"),
+        default=None,
+        help="Presidio in curate (default off when honoring scan-raw quarantine)",
+    )
     parser.add_argument(
         "--workers",
         type=int,
@@ -677,7 +710,11 @@ def main() -> None:
 
     cfg = load_yaml_config().get("curation") or {}
     use_gitleaks = bool(args.session_gitleaks) and not args.no_gitleaks
-    use_presidio = not args.no_presidio
+    presidio_mode = resolve_curate_presidio_mode(
+        cli_no_presidio=args.no_presidio,
+        cli_mode=args.presidio_mode,
+        honor_safety_failures=bool(args.honor_safety_failures),
+    )
     n_workers = worker_count("CURATE_WORKERS") if args.workers is None else max(1, args.workers)
     failure_keys = (
         load_safety_failure_keys(raw_dir) if args.honor_safety_failures else set()
@@ -686,7 +723,8 @@ def main() -> None:
         print(f"Safety quarantine: {len(failure_keys)} flagged raw line keys loaded")
     if not use_gitleaks:
         print("curate-raw: session gitleaks off (use scan-raw --gitleaks-per-file + quarantine)")
-    if use_presidio:
+    print(f"curate-raw: presidio_mode={presidio_mode}", flush=True)
+    if presidio_mode != "off":
         print(
             f"curate-raw: Presidio batch n_process={presidio_n_process()} "
             f"session_batch={presidio_session_batch()}",
@@ -709,7 +747,7 @@ def main() -> None:
                 cfg=cfg,
                 failure_keys=failure_keys,
                 use_gitleaks=use_gitleaks,
-                use_presidio=use_presidio,
+                presidio_mode=presidio_mode,
                 tier=args.tier,
                 out_fh=out_fh,
                 workers=n_workers,

@@ -217,16 +217,27 @@ data:
   min_tier1_promote: 500
   personal_ratio_mature: 0.80
 
-# Training mix from warehouse — personal always included; public capped
-# True-data policy: personal agent logs are primary; public only if explicitly "wild/real" (see docs/oss/PUBLIC-DATASETS.md).
+# Training mix from warehouse — personal always included; public by ratio + priority
+# Synthetic HF sets enabled after S10 audit (loaders + fast_ingest); zen_agentic stays off (no HF shards).
 training_mix:
   prioritize_personal: true       # never drop personal rows when building a manifest
-  personal_ratio: 1.0             # true-data: personal only until you opt into vetted public
-  public_cap: 5000                 # hard cap when public enabled (swe_chat etc.)
-  public_dataset_priority:        # real/wild only — synthetic sets disabled in public_datasets
+  personal_ratio: 0.90            # 90% personal / 10% public in mixed manifests
+  public_cap: null                 # no hard cap — ratio + warehouse row count bound public rows
+  public_dataset_priority:
+    - swe_zero_openhands
+    - swe_zero_12m
     - swe_chat
+    - coderforge_preview
+    - swe_next
+    - nemotron_opencode
+    - agentic_sft_new
+    - agentic_cot_coding
+    - nemotron_swe_v2
+    - scale_swe
+    - cooper_qwen9b_coop_claude
+    - ling_coder_sft
+    - opencode_refined
     - github_public
-    - zen_agentic
   personal_sample_weight: 1.0
   public_sample_weight: 0.25
 
@@ -274,53 +285,53 @@ public_datasets:
     refresh_download: false
     write_buffer_rows: 500
   datasets:
-    # --- Real / wild (optional public supplement) ---
+    # --- Real / wild ---
     swe_chat:
       enabled: true
-      max_rows: 50000    # wild Cursor/Claude Code sessions — cap; not full 872k
+      max_rows: null     # full ingest (gated — hf auth login)
     zen_agentic:
-      enabled: false     # enable when HF shards land — real Claude Code + git
-      max_rows: 5000
-    # --- Synthetic / agent-rollout / merged SFT (disabled for true-data policy) ---
+      enabled: false     # HF placeholder — enable when shards land
+      max_rows: null
+    # --- Synthetic / agent-rollout (S10 audit PASS — loaders + fast_ingest) ---
     coderforge_preview:
-      enabled: false
-      max_rows: 10000
+      enabled: true
+      max_rows: null
     swe_next:
-      enabled: false     # execution-grounded but agent-simulated trajectories
+      enabled: true
       max_rows: null
     swe_zero_12m:
-      enabled: false
+      enabled: true
       max_rows: null
       exit_status: Submitted
     swe_zero_openhands:
-      enabled: false
+      enabled: true
       max_rows: null
       require_patch: true
     agentic_sft_new:
-      enabled: false
-      max_rows: 10000
-    agentic_cot_coding:
-      enabled: false
-      max_rows: 10000
-    nemotron_opencode:
-      enabled: false
-      max_rows: 10000
-    cooper_qwen9b_coop_claude:
-      enabled: false     # benchmark coop sim, not wild user logs
+      enabled: true
       max_rows: null
-    # --- Legacy (pre-Top-10) ---
+    agentic_cot_coding:
+      enabled: true
+      max_rows: null
+    nemotron_opencode:
+      enabled: true
+      max_rows: null
+    cooper_qwen9b_coop_claude:
+      enabled: true
+      max_rows: null
+    # --- Legacy (S10-verified loaders) ---
     opencode_refined:
-      enabled: false
+      enabled: true
       max_rows: null
     ling_coder_sft:
-      enabled: false
+      enabled: true
       max_rows: null
     nemotron_swe_v2:
-      enabled: false
+      enabled: true
       max_rows: null
       splits: agentless
     scale_swe:
-      enabled: false
+      enabled: true
       max_rows: null
 
 warehouse:
@@ -361,6 +372,17 @@ safety:
   version: 1                          # bump when block thresholds / entities change
   quarantine_severity: block          # block | warn — only block-level findings quarantine rows
   gitleaks_severity: block            # block | warn — gitleaks hits (after allowlist)
+  scan:
+    presidio_mode: pattern            # off | pattern (default) | full (spaCy NER — slow)
+    profiles:
+      personal:
+        glob: "cursor-*.jsonl"
+        presidio_mode: pattern
+      public:
+        glob: "public-*.jsonl"
+        presidio_mode: pattern
+  curate:
+    presidio_mode: "off"              # quoted — YAML 1.1 treats bare off/no as false
   diff_harnesses:                     # scan added lines only for these harnesses (diff_scan.py)
     - git
     - git-diffs

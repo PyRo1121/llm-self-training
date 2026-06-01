@@ -12,6 +12,7 @@ from pathlib import Path
 from llm_core import data_dir, repo_root
 
 from llm_dataprep.perf import worker_count
+from llm_dataprep.scan_config import resolve_curate_presidio_mode, resolve_scan_presidio_mode
 from llm_dataprep.safety_policy import load_safety_policy, safety_policy_version
 
 
@@ -30,7 +31,8 @@ def _print_safety_policy(
     *,
     use_gitleaks: bool,
     gitleaks_per_file: bool,
-    use_presidio: bool,
+    scan_presidio_mode: str,
+    curate_presidio_mode: str,
     honor_safety_failures: bool,
 ) -> None:
     pol = load_safety_policy()
@@ -42,7 +44,8 @@ def _print_safety_policy(
         f" severity={pol.gitleaks_severity.value} per_file={gitleaks_per_file}"
     )
     print(
-        f"  presidio={'on' if use_presidio else 'off'}"
+        f"  scan presidio_mode={scan_presidio_mode}"
+        f" curate presidio_mode={curate_presidio_mode}"
         f" block_entities={len(pol.presidio_block_entities)}"
         f" entities={len(pol.presidio_entities)}"
     )
@@ -81,7 +84,13 @@ def main() -> None:
     parser.add_argument(
         "--no-presidio",
         action="store_true",
-        help="Skip Presidio in scan-raw and curate-raw",
+        help="Skip Presidio in scan-raw and curate-raw (same as --presidio-mode off)",
+    )
+    parser.add_argument(
+        "--presidio-mode",
+        choices=("off", "pattern", "full"),
+        default=None,
+        help="Override scan + curate Presidio mode (default from config)",
     )
     parser.add_argument("--presidio", action="store_true", help="Presidio on audit-sample")
     parser.add_argument(
@@ -128,15 +137,25 @@ def main() -> None:
 
     use_gitleaks = (args.gitleaks or bool(shutil.which("gitleaks"))) and not args.no_gitleaks
     gitleaks_per_file = bool(args.gitleaks_per_file)
-    use_presidio = not args.no_presidio
     honor_safety_failures = not args.no_honor_safety_failures
+    scan_presidio_mode = resolve_scan_presidio_mode(
+        cli_no_presidio=args.no_presidio,
+        cli_mode=args.presidio_mode,
+    )
+    curate_presidio_mode = resolve_curate_presidio_mode(
+        cli_no_presidio=args.no_presidio,
+        cli_mode=args.presidio_mode,
+        honor_safety_failures=honor_safety_failures,
+    )
     scan_cmd = ["uv", "run", "--package", "llm-dataprep", "scan-raw", "--workers", str(scan_workers)]
     if use_gitleaks:
         scan_cmd.append("--gitleaks")
-        if gitleaks_per_file:
-            scan_cmd.append("--gitleaks-per-file")
-    if not use_presidio:
+        if not gitleaks_per_file:
+            scan_cmd.append("--no-gitleaks-per-file")
+    if scan_presidio_mode == "off":
         scan_cmd.append("--no-presidio")
+    else:
+        scan_cmd.extend(["--presidio-mode", scan_presidio_mode])
     _run(scan_cmd, cwd=root)
 
     curate_cmd = [
@@ -148,8 +167,10 @@ def main() -> None:
         "--workers",
         str(curate_workers),
     ]
-    if not use_presidio:
+    if curate_presidio_mode == "off":
         curate_cmd.append("--no-presidio")
+    else:
+        curate_cmd.extend(["--presidio-mode", curate_presidio_mode])
     if args.no_honor_safety_failures:
         curate_cmd.append("--no-honor-safety-failures")
     _run(curate_cmd, cwd=root)
@@ -199,7 +220,7 @@ def main() -> None:
         "--curated",
         str(curated),
     ]
-    if args.presidio or use_presidio:
+    if args.presidio or scan_presidio_mode == "full":
         audit_cmd.append("--use-presidio")
     if use_gitleaks:
         audit_cmd.append("--gitleaks")
@@ -231,11 +252,15 @@ def main() -> None:
     _run(wh_load, cwd=root)
 
     print(f"\nPhase 1 pipeline done. Curated: {curated}")
-    print(f"Workers: scan={scan_workers} curate={curate_workers} presidio={use_presidio}")
+    print(
+        f"Workers: scan={scan_workers} curate={curate_workers} "
+        f"scan_presidio={scan_presidio_mode} curate_presidio={curate_presidio_mode}"
+    )
     _print_safety_policy(
         use_gitleaks=use_gitleaks,
         gitleaks_per_file=gitleaks_per_file,
-        use_presidio=use_presidio,
+        scan_presidio_mode=scan_presidio_mode,
+        curate_presidio_mode=curate_presidio_mode,
         honor_safety_failures=honor_safety_failures,
     )
 

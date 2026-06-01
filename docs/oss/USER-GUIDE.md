@@ -97,6 +97,27 @@ make prepare-mixed
 
 Policy: **secrets + PII only** — not topic/refusal filtering. See [OSS-RELEASE.md](OSS-RELEASE.md).
 
+**Presidio modes** (`config/default.yaml` → `safety.scan.presidio_mode`):
+
+| Mode | Speed | Coverage |
+|------|-------|----------|
+| `pattern` (default) | ~10–50× vs full | Structured PII + HF/Cursor/Turso tokens; no spaCy NER |
+| `full` | Slow | Adds spaCy PERSON/LOCATION/NRP |
+| `off` | Fastest | Regex + gitleaks only |
+
+```bash
+# Default: pattern scan, curate skips Presidio (honors scan-raw quarantine)
+make sanitize
+
+# Explicit fast path
+uv run --package llm-dataprep scan-raw --gitleaks --gitleaks-per-file --presidio-mode pattern
+
+# Maximum recall (slow)
+uv run --package llm-dataprep scan-raw --gitleaks --presidio-mode full --workers 1
+```
+
+Curate defaults to `safety.curate.presidio_mode: off` when `--honor-safety-failures` (default) — avoids re-scanning sessions already checked row-by-row in scan-raw.
+
 **Block vs warn.** Each finding is classified `block` or `warn` (regex kind, Presidio entity, or `gitleaks_severity`). `config/default.yaml` → `safety.quarantine_severity`:
 
 | Setting | Quarantine when | Output |
@@ -110,7 +131,7 @@ With `quarantine_severity: block`, warn-only rows land in `data/raw/safety-warn-
 
 **Diff mode.** Rows from harnesses in `safety.diff_harnesses` (`git`, `git-diffs`, or `source_path` containing `git-diffs`) scan **added lines only** (`+` in unified diff, not `+++` headers). Presidio skipped on diff rows; gitleaks sidecar still runs. Tweak harness list in `config/default.yaml`.
 
-**Safety eval.** `make safety-eval` runs labeled fixtures (`packages/dataprep/fixtures/safety_eval.jsonl`) through `scan_text` / `scan_diff_text` (regex-only, no gitleaks/Presidio) and prints precision/recall/F1 overall and per label. Use after changing allowlist or severity rules.
+**Safety eval.** `make safety-eval` runs labeled fixtures (`packages/dataprep/tests/fixtures/safety_eval.jsonl`) through `scan_text` / `scan_diff_text` (regex-only, no gitleaks/Presidio) and prints precision/recall/F1 overall and per label. Use after changing allowlist or severity rules.
 
 Config: `safety` block in `config/default.yaml` + `config/safety-allowlist.yaml`. Finding schema: [DATA-FORMATS.md](DATA-FORMATS.md#safety-failure-row).
 

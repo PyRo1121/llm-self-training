@@ -87,3 +87,33 @@ def test_try_skip_ingest_hub_newer(tmp_path: Path) -> None:
         out_dir=tmp_path / "raw",
     )
     assert skipped is False
+
+
+def test_try_skip_ingest_legacy_bootstrap_counts_raw_lines(tmp_path: Path) -> None:
+    spec = get_spec("swe_zero_openhands")
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / ".download_complete").write_text(
+        datetime(2026, 5, 30, tzinfo=timezone.utc).isoformat(),
+        encoding="utf-8",
+    )
+    raw = tmp_path / "raw" / "public-swe-zero-openhands-2026-05-31.jsonl"
+    raw.parent.mkdir()
+    raw.write_text('{"a":1}\n\n{"a":2}\n', encoding="utf-8")
+
+    hub_meta = {
+        "sha": "abc123",
+        "last_modified": datetime(2026, 5, 1, tzinfo=timezone.utc),
+    }
+    skipped, path, count, msg = try_skip_ingest(
+        cache,
+        spec,
+        hub_meta,
+        {},
+        raw_prefix="public-swe-zero-openhands",
+        out_dir=tmp_path / "raw",
+    )
+    assert skipped is True
+    assert path == raw
+    assert count == 2
+    assert "skipping download" in msg

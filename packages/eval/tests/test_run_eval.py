@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from llm_eval.run_eval import _smoke_prompt, evaluate_suite, run_all
 from llm_eval.suites import SUITE_FILES
@@ -159,3 +159,34 @@ def test_run_all_iterates_suite_files_keys(mock_eval) -> None:
     called = [c.args[0] for c in mock_eval.call_args_list]
     assert called == list(SUITE_FILES)
     assert len(report["suites"]) == len(SUITE_FILES)
+
+
+@patch("llm_eval.run_eval.register_benchmark_run")
+@patch("llm_eval.run_eval.ensure_warehouse")
+@patch("llm_eval.run_eval.evaluate_suite")
+def test_run_all_registers_warehouse_when_train_run(
+    mock_eval, mock_wh, mock_register
+) -> None:
+    mock_eval.return_value = {
+        "suite": "debug",
+        "verdict": "pass",
+        "reason": "smoke_chat",
+        "tasks": 1,
+        "passed": 1,
+    }
+    conn = MagicMock()
+    mock_wh.return_value = conn
+    report = run_all(
+        model="qwen2.5-coder:7b",
+        ollama_host="http://127.0.0.1:11434",
+        strict=False,
+        smoke_chat=False,
+        train_run="pyro-test-run",
+    )
+    assert report["train_run"] == "pyro-test-run"
+    assert mock_register.call_count == len(SUITE_FILES)
+    conn.close.assert_called_once()
+    for call in mock_register.call_args_list:
+        assert call.args[0] is conn
+        assert call.kwargs["train_run_name"] == "pyro-test-run"
+        assert call.kwargs["status"] == "completed"
