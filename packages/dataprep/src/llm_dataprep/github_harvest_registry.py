@@ -14,7 +14,38 @@ GitHub code-search path regex (docs.github.com search-github).
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+# GitHub code search: at least one bare term required (filename:-only exempt).
+_GITHUB_QUERY_QUALIFIERS = (
+    "path:",
+    "extension:",
+    "fork:",
+    "in:",
+    "language:",
+    "repo:",
+    "user:",
+    "org:",
+    "is:",
+    "filename:",
+    "content:",
+    "size:",
+)
+_FILENAME_ONLY_QUERY = re.compile(r"^filename:")
+
+
+def query_has_github_search_term(q: str) -> bool:
+    """True when ``q`` satisfies GitHub code-search bare-term rule."""
+    s = q.strip()
+    if _FILENAME_ONLY_QUERY.match(s):
+        return True
+    bare = [
+        tok
+        for tok in s.split()
+        if not any(tok.startswith(prefix) for prefix in _GITHUB_QUERY_QUALIFIERS)
+    ]
+    return bool(bare)
 
 # Shared path rejects for benchmark / vendor noise (also in config/github-harvest.yaml)
 DEFAULT_EXCLUDE_PATH_REGEX: tuple[str, ...] = (
@@ -109,7 +140,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "gemini_cli",
         "label": "Google Gemini CLI session chats",
         "q": (
-            r'path:/\.gemini\/tmp\/ extension:jsonl fork:true'
+            '"type":"user" '
+            r'path:/\.gemini\/tmp\/ extension:jsonl fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.gemini/tmp/.+/chats/session-.+\.jsonl$",
@@ -120,7 +152,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "gemini_cli",
         "label": "Google Gemini CLI session chats (JSON)",
         "q": (
-            r'path:/\.gemini\/tmp\/ extension:json fork:true'
+            '"type":"user" '
+            r'path:/\.gemini\/tmp\/ extension:json fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.gemini/tmp/.+/chats/session-.+\.json$",
@@ -131,7 +164,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "copilot",
         "label": "GitHub Copilot CLI Chronicle events",
         "q": (
-            r'path:/\.copilot\/session-state\/ extension:jsonl fork:true'
+            '"type":"user.message" '
+            r'path:/\.copilot\/session-state\/ extension:jsonl fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.copilot/session-state/[^/]+/events\.jsonl$",
@@ -142,7 +176,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "kimi",
         "label": "Kimi CLI context.jsonl",
         "q": (
-            r'path:/\.kimi\/sessions\/ extension:jsonl fork:true'
+            '"role":"user" '
+            r'path:/\.kimi\/sessions\/ extension:jsonl fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.kimi/sessions/.+/context\.jsonl$",
@@ -153,7 +188,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "factory",
         "label": "Factory Droid project transcripts",
         "q": (
-            r'path:/\.factory\/projects\/ extension:jsonl fork:true'
+            '"role":"user" '
+            r'path:/\.factory\/projects\/ extension:jsonl fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.factory/projects/.+\.jsonl$",
@@ -164,7 +200,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "openclaw",
         "label": "OpenClaw agent sessions",
         "q": (
-            r'path:/\.openclaw\/agents\/ extension:jsonl fork:true'
+            '"role":"user" '
+            r'path:/\.openclaw\/agents\/ extension:jsonl fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.openclaw/agents/[^/]+/sessions/[^/]+\.jsonl$",
@@ -176,7 +213,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "openhands",
         "label": "OpenHands session events JSON",
         "q": (
-            r'path:/\.openhands-state\/sessions\/ extension:json fork:true'
+            '"source":"user" '
+            r'path:/\.openhands-state\/sessions\/ extension:json fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.openhands-state/sessions/[^/]+/events/.+\.json$",
@@ -200,7 +238,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "continue",
         "label": "Continue.dev session JSON",
         "q": (
-            r'path:/\.continue\/sessions\/ extension:json fork:true'
+            '"role":"user" '
+            r'path:/\.continue\/sessions\/ extension:json fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.continue/sessions/[^/]+\.json$",
@@ -238,7 +277,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "watchfire",
         "label": "Watchfire session JSONL logs",
         "q": (
-            r'path:/\.watchfire\/logs\/ extension:jsonl fork:true'
+            '"type":"human" '
+            r'path:/\.watchfire\/logs\/ extension:jsonl fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.watchfire/logs/.+\.jsonl$",
@@ -249,7 +289,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "mux",
         "label": "Mux session JSONL",
         "q": (
-            r'path:/\.mux\/sessions\/ extension:jsonl fork:true'
+            '"role":"user" '
+            r'path:/\.mux\/sessions\/ extension:jsonl fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.mux/sessions/.+\.jsonl$",
@@ -260,7 +301,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "kiro",
         "label": "Kiro CLI sessions",
         "q": (
-            r'path:/\.kiro\/sessions\/ extension:jsonl fork:true'
+            '"role":"user" '
+            r'path:/\.kiro\/sessions\/ extension:jsonl fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.kiro/sessions/cli/.+\.jsonl$",
@@ -271,7 +313,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "kiro",
         "label": "Kiro CLI sessions (JSON)",
         "q": (
-            r'path:/\.kiro\/sessions\/ extension:json fork:true'
+            '"role":"user" '
+            r'path:/\.kiro\/sessions\/ extension:json fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.kiro/sessions/cli/.+\.json$",
@@ -282,7 +325,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "antigravity",
         "label": "Antigravity tokscale session cache JSONL",
         "q": (
-            r'path:/antigravity-cache\/sessions\/ extension:jsonl fork:true'
+            '"role":"user" '
+            r'path:/antigravity-cache\/sessions\/ extension:jsonl fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)antigravity-cache/sessions/.+\.jsonl$",
@@ -294,7 +338,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "trae",
         "label": "Trae tokscale session cache JSON",
         "q": (
-            r'path:/trae-cache\/sessions\/ extension:json fork:true'
+            '"role":"user" '
+            r'path:/trae-cache\/sessions\/ extension:json fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)trae-cache/sessions/.+\.json$",
@@ -306,7 +351,7 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "qwen_cli",
         "label": "Qwen Code CLI chat JSONL",
         "q": (
-            "path:.qwen/projects extension:jsonl fork:true"
+            '"type":"user" path:.qwen/projects extension:jsonl fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.qwen/projects/.+/chats/.+\.jsonl$",
@@ -317,7 +362,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "generic",
         "label": "Vibe (Mistral) messages JSONL",
         "q": (
-            r'path:/\.vibe\/logs\/session\/ extension:jsonl fork:true'
+            '"role":"user" '
+            r'path:/\.vibe\/logs\/session\/ extension:jsonl fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.vibe/logs/session/.+/messages\.jsonl$",
@@ -340,7 +386,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "openclaw",
         "label": "Clawdbot session JSONL",
         "q": (
-            r'path:/\.clawdbot\/agents\/ extension:jsonl fork:true'
+            '"role":"user" '
+            r'path:/\.clawdbot\/agents\/ extension:jsonl fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.clawdbot/agents/.+/sessions/.+\.jsonl$",
@@ -351,7 +398,7 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "copilot_vscode",
         "label": "GitHub Copilot Chat VS Code chatSessions JSONL",
         "q": (
-            "path:chatSessions extension:jsonl fork:true"
+            '"kind":2 path:chatSessions extension:jsonl fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)chatSessions/.+\.jsonl$",
@@ -362,7 +409,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "generic",
         "label": "Zed AI exported thread JSON (when committed)",
         "q": (
-            r'path:/zed\/threads\/ extension:json fork:true'
+            '"role":"user" '
+            r'path:/zed\/threads\/ extension:json fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)zed/threads/.+\.json$",
@@ -398,7 +446,7 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "opencode",
         "label": "OpenCode legacy storage/message JSON",
         "q": (
-            "path:opencode/storage/message extension:json fork:true"
+            '"role":"user" path:opencode/storage/message extension:json fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)opencode/storage/message/.+\.json$",
@@ -410,7 +458,8 @@ HARVEST_QUERY_REGISTRY: tuple[dict[str, Any], ...] = (
         "harness_hint": "factory",
         "label": "Factory Droid sessions JSONL",
         "q": (
-            r'path:/\.factory\/sessions\/ extension:jsonl fork:true'
+            '"role":"user" '
+            r'path:/\.factory\/sessions\/ extension:jsonl fork:true in:file'
         ),
         "require_path_regex": (
             r"(?i)(?:^|/)\.factory/sessions/.+\.jsonl$",

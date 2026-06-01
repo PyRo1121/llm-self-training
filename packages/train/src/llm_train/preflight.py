@@ -25,10 +25,7 @@ from llm_train.config import (
 )
 from llm_train.dataset import load_messages_dataset, train_file_stats
 from llm_train.dataset_filter import filter_dataset_to_max_tokens, max_chars_for_seq
-from llm_train.chronicals_runtime import (
-    _flash_attn_available,
-    load_train_tokenizer,
-)
+from llm_train.chronicals_runtime import load_train_tokenizer
 from llm_train.flash_attn import flash_attn_available
 from llm_train.token_audit import audit_messages_lengths, print_token_audit
 from llm_train.vram_budget import (
@@ -329,7 +326,7 @@ def run_preflight(
             _ok("activation_offloading ON when FA2 (promote)")
     else:
         print("[TRL packing / flash-attn]")
-        fa = _flash_attn_available()
+        fa = flash_attn_available()
         want_packing = bool(chronicals.get("use_sequence_packing"))
         if want_packing and not fa:
             _warn("use_sequence_packing=true but flash-attn not installed — runtime disables packing")

@@ -180,7 +180,7 @@ def main() -> None:
     chronicals = chronicals_settings(promote=args.promote, decensor=args.decensor)
     train_path = args.train_file or default_train_file()
 
-    if backend == "unsloth":
+    if backend == "unsloth" and not args.dry_run:
         import importlib.util
 
         if importlib.util.find_spec("unsloth") is None:

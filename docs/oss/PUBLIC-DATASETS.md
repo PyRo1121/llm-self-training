@@ -24,7 +24,7 @@ uv run --package llm-dataprep github-harvest --query cursor_agent_transcripts --
 
 **Rate limits:** code search ~9 req/min authenticated; the harvester sleeps 7s between search pages. State is tracked in `data/github_harvest/state.json` — re-runs skip unchanged blobs (same SHA). After tightening queries, run once with `--reset-state` so old broad hits are not retried.
 
-**31 harness queries** (registry in `github_harvest_registry.py`): Cursor, Codex, Claude Code, **Pi**, **OpenCode** (session + message), Gemini CLI, Copilot (Chronicle + history), Kimi, Factory, OpenClaw, OpenHands, Amp, Continue, Cline, Roo Code, Watchfire, Mux, Kiro, Antigravity, Trae, Qwen, Vibe, Aider, **Goose**. Tier-A queries paginate **10 pages** (1000 hits max); warm runs rotate search pages via `state.json` / Redis `queries` cursor.
+**33 harness queries** (registry in `github_harvest_registry.py`): Cursor, Codex, Claude Code, **Pi**, **OpenCode** (session + message), Gemini CLI, Copilot (Chronicle + history), Kimi, Factory, OpenClaw, OpenHands, Amp, Continue, Cline, Roo Code, Watchfire, Mux, Kiro, Antigravity, Trae, Qwen, Vibe, Aider, **Goose**. Tier-A queries paginate **10 pages** (1000 hits max); warm runs rotate search pages via `state.json` / Redis `queries` cursor.
 
 **Max-yield playbook (12 GB / one PAT):**
 
@@ -100,35 +100,32 @@ Dropped — generic instruct / low agentic ROI for pyro-coder (not ingested):
 
 ## Top 10 (Dec 2025 – May 2026)
 
-Final public-ingest plan for `pyro-coder` bootstrap. Caps in `config/default.yaml` → `public_datasets.datasets.*.max_rows`.
+Final public-ingest plan for `pyro-coder` bootstrap — **10 IDs** in `packages/dataprep/src/llm_dataprep/public/registry.py` (`tier=top10`). Caps in `config/default.yaml` → `public_datasets.datasets.*.max_rows`.
 
 | Rank | ID | Hugging Face | Released | Default cap | Gated | Why ingest |
 |------|-----|--------------|----------|-------------|-------|------------|
-| 1 | `ultradata_sft_2605` | [openbmb/UltraData-SFT-2605](https://huggingface.co/datasets/openbmb/UltraData-SFT-2605) | May 2026 | 50k | no | **Knowledge + Code + Math** configs (`no_think` split) |
-| 2 | `swe_chat` | [SALT-NLP/SWE-chat](https://huggingface.co/datasets/SALT-NLP/SWE-chat) | Apr 2026 | all | **yes** | Real Cursor / Claude Code wild sessions + tool calls |
-| — | `swe_zero_openhands` | [nvidia/SWE-Zero-openhands-trajectories](https://huggingface.co/datasets/nvidia/SWE-Zero-openhands-trajectories) | 2026 | all | no | OpenHands SWE-Zero trajectories + patches |
-| — | `swe_zero_12m` | [AlienKevin/SWE-ZERO-12M-trajectories](https://huggingface.co/datasets/AlienKevin/SWE-ZERO-12M-trajectories) | 2026 | all (`Submitted` default) | no | 12M mini-swe-agent trajectories |
-| 3 | `coderforge_preview` | [togethercomputer/CoderForge-Preview](https://huggingface.co/datasets/togethercomputer/CoderForge-Preview) | Feb 2026 | 10k | no | Test-verified long-horizon agent trajectories (`filtered_reward1`) |
-| 4 | `zen_agentic` | [zenlm/zen-agentic-dataset](https://huggingface.co/datasets/zenlm/zen-agentic-dataset) | May 2026 | 5k | no* | Hidden gem — real Claude Code + git history (~12B tokens) |
-| 5 | `swe_next` | [TIGER-Lab/SWE-Next-SFT-Trajectories](https://huggingface.co/datasets/TIGER-Lab/SWE-Next-SFT-Trajectories) | Mar–Apr 2026 | all (~3.7k) | no | Execution-grounded SWE trajectories; `tool`→`user` |
-| 6 | `high_coder_sft` | [Crownelius/High-Coder-SFT-Medium](https://huggingface.co/datasets/Crownelius/High-Coder-SFT-Medium) | May 2026 | 10k | no | 124k long-form synthetic code (prompt + full source file) |
+| 1 | `swe_chat` | [SALT-NLP/SWE-chat](https://huggingface.co/datasets/SALT-NLP/SWE-chat) | Apr 2026 | 50k | **yes** | Real Cursor / Claude Code wild sessions + tool calls |
+| 2 | `coderforge_preview` | [togethercomputer/CoderForge-Preview](https://huggingface.co/datasets/togethercomputer/CoderForge-Preview) | Feb 2026 | 10k | no | Test-verified long-horizon agent trajectories (`filtered_reward1`) |
+| 3 | `zen_agentic` | [zenlm/zen-agentic-dataset](https://huggingface.co/datasets/zenlm/zen-agentic-dataset) | May 2026 | 5k | no* | Real Claude Code + git history (~12B tokens) |
+| 4 | `swe_next` | [TIGER-Lab/SWE-Next-SFT-Trajectories](https://huggingface.co/datasets/TIGER-Lab/SWE-Next-SFT-Trajectories) | Mar 2026 | all (~3.7k) | no | Execution-grounded SWE trajectories; `tool`→`user` |
+| 5 | `swe_zero_12m` | [AlienKevin/SWE-ZERO-12M-trajectories](https://huggingface.co/datasets/AlienKevin/SWE-ZERO-12M-trajectories) | 2026 | all (`Submitted` default) | no | 12M mini-swe-agent trajectories |
+| 6 | `swe_zero_openhands` | [nvidia/SWE-Zero-openhands-trajectories](https://huggingface.co/datasets/nvidia/SWE-Zero-openhands-trajectories) | 2026 | all | no | OpenHands SWE-Zero trajectories + patches |
 | 7 | `agentic_sft_new` | [WaltonFuture/agentic-sft-new](https://huggingface.co/datasets/WaltonFuture/agentic-sft-new) | May 2026 | 10k | no | Merged agentic SFT — tools, edits, multi-hop |
 | 8 | `agentic_cot_coding` | [mepartha/Agentic-Chain-of-Thought-Coding-SFT-Dataset-v1.1](https://huggingface.co/datasets/mepartha/Agentic-Chain-of-Thought-Coding-SFT-Dataset-v1.1) | 2026 | 10k | no | Agentic CoT coding traces (`[thinking]` prefix when present) |
 | 9 | `nemotron_opencode` | [nvidia/Nemotron-SFT-OpenCode-v1](https://huggingface.co/datasets/nvidia/Nemotron-SFT-OpenCode-v1) | Mar 2026 | 10k | no | OpenCode-style tool-calling across 6 splits |
-| 10 | `agent_trove` | [open-thoughts/AgentTrove](https://huggingface.co/datasets/open-thoughts/AgentTrove) | Apr 2026 | 10k | no | 1.7M general agentic traces (coding-heavy subset) |
-| — | `cooper_qwen9b_coop_claude` | [CooperBench/qwen9b-coop-claude-code](https://huggingface.co/datasets/CooperBench/qwen9b-coop-claude-code) | 2026 | all (~368 pairs) | no | Two-agent Claude Code coop trajectories on Qwen3.5-9B |
+| 10 | `cooper_qwen9b_coop_claude` | [CooperBench/qwen9b-coop-claude-code](https://huggingface.co/datasets/CooperBench/qwen9b-coop-claude-code) | 2026 | all (~368 pairs) | no | Two-agent Claude Code coop trajectories on Qwen3.5-9B |
 
 \* `zen_agentic`: HF repo is currently a **placeholder** (no public shard files). Loader fails fast with card instructions (`oss@hanzo.ai`). When shards land, use `llm-dataprep[zed]` for zstd JSONL streaming.
 
 ### Recommended ingest order
 
-1. **Small + ungated first** (validate pipeline): `swe_next`, `cooper_qwen9b_coop_claude`, `high_coder_sft`, `nemotron_opencode`
-2. **High-signal agentic**: `coderforge_preview`, `agentic_sft_new`, `agentic_cot_coding`, `agent_trove`, `ling_coder_sft`, `nemotron_swe_v2`, `scale_swe`
-3. **Gated / large** (after `hf auth login`): `swe_chat`, `ultradata_sft_2605`, `codex_7m`
+1. **Small + ungated first** (validate pipeline): `swe_next`, `cooper_qwen9b_coop_claude`, `nemotron_opencode`
+2. **High-signal agentic**: `coderforge_preview`, `agentic_sft_new`, `agentic_cot_coding`, `swe_zero_openhands`, `swe_zero_12m`
+3. **Gated** (after `hf auth login`): `swe_chat`
 4. **When available**: `zen_agentic`
 
 ```bash
-make public-ingest PUBLIC_DATASETS="cooper_qwen9b_coop_claude,swe_next,ling_coder_sft"
+make public-ingest PUBLIC_DATASETS="cooper_qwen9b_coop_claude,swe_next,nemotron_opencode"
 ```
 
 ### Gated datasets
@@ -139,7 +136,7 @@ hf auth login
 hf auth whoami
 
 # Accept terms on each gated dataset card in the browser, then:
-uv run --package llm-dataprep public-ingest --datasets swe_chat,ultradata_sft_2605
+uv run --package llm-dataprep public-ingest --datasets swe_chat
 
 # Optional: export token for CI/other shells (overrides cached login)
 export HF_TOKEN=hf_...
@@ -149,26 +146,16 @@ export HF_TOKEN=hf_...
 
 ## Legacy (disabled by default)
 
-Pre–Top-10 bootstrap sets — still in registry, off in config:
+Pre–Top-10 bootstrap sets — **4 IDs** in `registry.py` (`tier=legacy`), off in config:
 
 | ID | Repo | Notes |
 |----|------|-------|
-| `opencode_broad` | `EER6/nvidia-OpenCodeInstruct-broad` | judge≥4, test≥0.8 |
-| `opencode_refined` | `EER6/nvidia-OpenCodeInstruct-refined` | strict subset |
-| `nemotron_swe` | `nvidia/Nemotron-Cascade-SFT-SWE` | Dec 2025 Cascade SWE |
-| `self_code_align` | `bigcode/self-oss-instruct-sc2-exec-filter-50k` | exec-filtered |
-| `magicoder_75k` | `ise-uiuc/Magicoder-OSS-Instruct-75K` | diversity booster |
-
-Optional SFT extras (enabled in config, same pipeline as Top 10):
-
-| ID | Repo | Notes |
-|----|------|-------|
+| `opencode_refined` | `EER6/nvidia-OpenCodeInstruct-refined` | strict subset (judge=5, test=1.0) |
 | `ling_coder_sft` | `inclusionAI/Ling-Coder-SFT` | ShareGPT `messages` |
 | `nemotron_swe_v2` | `nvidia/Nemotron-SFT-SWE-v2` | Split `agentless` only (streaming) |
 | `scale_swe` | `AweAI-Team/Scale-SWE` | `problem_statement` + `patch` |
-| `codex_7m` | `Modotte/CodeX-7M-Non-Thinking` | 7.36M instruction pairs |
-| `codex_2m_thinking` | `Modotte/CodeX-2M-Thinking` | 2.19M with reasoning |
-| `cooper_qwen9b_coop_claude` | `CooperBench/qwen9b-coop-claude-code` | `agent1_traj.json` + `agent2_traj.json` per pair |
+
+**14 total** registry IDs = Top 10 + Legacy 4. Removed IDs below are not in `registry.py`.
 
 ## Operator flow (use this — not ad-hoc `hf download` / background one-offs)
 

@@ -6,12 +6,7 @@ import re
 from typing import Any
 
 from llm_dataprep.filters import SafetyFinding, SafetyReport, scan_regex
-from llm_dataprep.safety_policy import (
-    Severity,
-    apply_policy,
-    load_safety_policy,
-    should_quarantine,
-)
+from llm_dataprep.safety_policy import apply_policy, load_safety_policy, should_quarantine
 
 _PASSWORD_LINE = re.compile(
     r"(?i)(?:password|passwd|pwd)\s*[:=]\s*['\"]?([^\s'\"#]{6,})"
@@ -65,12 +60,9 @@ def scan_diff_text(text: str, *, use_regex: bool = True) -> SafetyReport:
         findings.extend(scan_diff_passwords(added))
     block, warn = apply_policy(findings, added)
     kept = block + warn
-    sevs = [Severity.BLOCK] * len(block) + [Severity.WARN] * len(warn)
     pol = load_safety_policy()
     ok = not should_quarantine(block, warn, pol)
-    report = SafetyReport(ok=ok, findings=kept)
-    report_findings_meta(report, kept, sevs)
-    return report
+    return SafetyReport(ok=ok, findings=kept)
 
 
 def scan_diff_record(record: dict[str, Any]) -> SafetyReport:
@@ -78,8 +70,3 @@ def scan_diff_record(record: dict[str, Any]) -> SafetyReport:
     if not isinstance(text, str):
         return SafetyReport(ok=True)
     return scan_diff_text(text)
-
-
-def report_findings_meta(report: SafetyReport, findings: list[SafetyFinding], severities: list[Severity]) -> None:
-    """Attach severities on report object via findings detail prefix (no schema break)."""
-    _ = report, findings, severities  # severities consumed at failure_row layer

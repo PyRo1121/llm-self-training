@@ -79,7 +79,11 @@ def _load_private_key_pem() -> bytes | None:
         return None
     path = Path(path_raw).expanduser()
     if not path.is_file():
-        raise SystemExit(f"GITHUB_APP_PRIVATE_KEY_PATH not found: {path}")
+        warnings.warn(
+            f"GITHUB_APP_PRIVATE_KEY_PATH not found: {path}; GitHub App lane disabled",
+            stacklevel=2,
+        )
+        return None
     return path.read_bytes()
 
 

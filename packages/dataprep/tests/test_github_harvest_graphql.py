@@ -2,9 +2,36 @@
 
 from __future__ import annotations
 
+import io
 import json
+import urllib.error
+from email.message import EmailMessage
+
+import pytest
 
 from llm_dataprep.github_harvest_graphql import BlobRequest, build_batch_query
+
+
+def _hdrs(**pairs: str) -> EmailMessage:
+    msg = EmailMessage()
+    for key, val in pairs.items():
+        msg[key] = val
+    return msg
+
+
+class _FakeResp:
+    def __init__(self, body: bytes, headers: EmailMessage | None = None) -> None:
+        self._body = body
+        self.headers = headers or EmailMessage()
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> _FakeResp:
+        return self
+
+    def __exit__(self, *args: object) -> bool:
+        return False
 
 
 def test_build_batch_query_includes_blob_fields() -> None:

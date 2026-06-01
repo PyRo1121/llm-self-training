@@ -62,6 +62,23 @@ def test_detect_harness_amp() -> None:
     assert detect_harness("backup/amp/threads/thread-abc.json") == "amp"
 
 
+def test_detect_harness_openhands_tightened() -> None:
+    assert (
+        detect_harness(".openhands-state/sessions/sess-abc/events/42.json")
+        == "openhands"
+    )
+    assert detect_harness("conversations/sess-xyz/events/7.json") == "openhands"
+    assert detect_harness(".openhands-state/config.json") == "generic"
+    assert detect_harness(".openhands-state/sessions/sess/events.jsonl") == "generic"
+    assert (
+        detect_harness("conversations/abc/events-handler/message.json") == "generic"
+    )
+    assert (
+        detect_harness("data/conversations/user1/chat/events_processor/out.json")
+        == "generic"
+    )
+
+
 def test_should_accept_path_rejects_harbor_jobs() -> None:
     cfg = HarvestConfig(
         exclude_path_substrings=("/jobs/", "harbor/"),
@@ -219,6 +236,24 @@ def test_parse_gemini_cli_jsonl_type_field() -> None:
     assert recs[1]["role"] == "assistant"
     assert all(r["harness"] == "gemini_cli" for r in recs)
     assert all(r["source"] == "github_public" for r in recs)
+
+
+def test_parse_gemini_cli_json_blob() -> None:
+    hit = _hit(".gemini/tmp/proj/chats/session-abc.json")
+    blob = json.dumps(
+        {
+            "messages": [
+                {"type": "user", "content": "How do I run harvest tests?"},
+                {"type": "gemini", "content": "Use uv run pytest with --cov."},
+            ]
+        }
+    )
+    recs = list(parse_blob_text(hit, blob, harness_hint="gemini_cli", max_lines=100))
+    assert len(recs) == 2
+    assert recs[0]["role"] == "user"
+    assert recs[1]["role"] == "assistant"
+    assert all(r["harness"] == "gemini_cli" for r in recs)
+    assert recs[0]["session_id"] == "session-abc"
 
 
 def test_parse_antigravity_tokscale_jsonl() -> None:
@@ -583,6 +618,34 @@ def test_parse_opencode_session_messages_fixture() -> None:
     assert len(recs) == 2
     assert recs[0]["role"] == "user"
     assert recs[1]["role"] == "assistant"
+
+
+def test_parse_opencode_storage_part_json() -> None:
+    hit = _hit(".local/share/opencode/storage/part/sess123/part-uuid.json")
+    blob = json.dumps({"type": "text", "text": "OpenCode split part text for harvest coverage."})
+    recs = list(parse_blob_text(hit, blob, harness_hint="opencode", max_lines=100))
+    assert len(recs) == 1
+    assert recs[0]["role"] == "assistant"
+    assert recs[0]["harness"] == "opencode"
+    assert recs[0]["session_id"] == "sess123"
+    assert "split part text" in recs[0]["text"]
+
+
+def test_parse_aider_markdown_history() -> None:
+    hit = _hit("project/.aider.chat.history.md")
+    blob = (
+        "# aider chat started\n\n"
+        "#### user\n"
+        "Raise github_harvest coverage with minimal tests.\n\n"
+        "#### assistant\n"
+        "Added gemini json, opencode part, and aider markdown tests.\n"
+    )
+    assert looks_like_chat_blob(blob, "aider")
+    recs = list(parse_blob_text(hit, blob, harness_hint="aider", max_lines=100))
+    assert len(recs) == 2
+    assert recs[0]["role"] == "user"
+    assert recs[1]["role"] == "assistant"
+    assert all(r["harness"] == "aider" for r in recs)
 
 
 def test_parse_amp_thread_block_content() -> None:

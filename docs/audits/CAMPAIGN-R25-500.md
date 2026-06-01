@@ -62,5 +62,9 @@
 - Verdict: **FAIL** (19/20 scopes; S16 presidio/diff PASS)
 - Top real bugs: kiro extension, qwen stream-json, openhands SDK, amp sniff, cache Redis guard, safety diff harness, turso FK, train weighted sampler, eval auto-pass, chunk_messages fallback, load_swe_chat OOM
 
-### Round 2 — FIX (in progress)
-- Agents: F01–F20 — verified must-fix only; skip coverage-only unless trivial test
+### Round 2 — FIX (complete)
+- 15 fix agents applied verified bugs (noise filtered: coverage/docs deferred to later rounds)
+- Fixes: kiro split query, qwen content[], openhands SDK, amp sniff, cache Redis+flush, safety diff/presidio, turso FK, train sampler, chunk_messages, eval incomplete, claude/cursor parsers, load_swe_chat stream, scan_raw diff gitleaks, harvest app env
+
+### Round 3 — AUDIT (queued)
+- Re-audit S01–S10 after fixes; target PASS on real bugs, coverage still gap

@@ -11,20 +11,20 @@ from llm_core.yaml_config import load_yaml_config
 @dataclass(frozen=True)
 class MixPolicy:
     prioritize_personal: bool = True
-    personal_ratio: float = 0.80
+    personal_ratio: float = 1.0
     public_cap: int | None = None
     public_dataset_priority: tuple[str, ...] = (
         "swe_chat",
         "zen_agentic",
     )
     personal_sample_weight: float = 1.0
-    public_sample_weight: float = 0.35
+    public_sample_weight: float = 0.25
 
 
 def load_mix_policy() -> MixPolicy:
     doc = load_yaml_config()
     raw = doc.get("training_mix") or {}
-    pr = float(raw.get("personal_ratio", doc.get("data", {}).get("personal_ratio_mature", 0.80)))
+    pr = float(raw.get("personal_ratio", doc.get("data", {}).get("personal_ratio_mature", 1.0)))
     cap = raw.get("public_cap")
     return MixPolicy(
         prioritize_personal=bool(raw.get("prioritize_personal", True)),
@@ -32,7 +32,7 @@ def load_mix_policy() -> MixPolicy:
         public_cap=int(cap) if cap is not None else None,
         public_dataset_priority=tuple(raw.get("public_dataset_priority") or MixPolicy().public_dataset_priority),
         personal_sample_weight=float(raw.get("personal_sample_weight", 1.0)),
-        public_sample_weight=float(raw.get("public_sample_weight", 0.35)),
+        public_sample_weight=float(raw.get("public_sample_weight", 0.25)),
     )
 
 
@@ -68,7 +68,7 @@ def apply_mix(
         p_count = len(personal)
         if p_count == 0:
             max_pub = policy.public_cap or len(pub_sorted)
-        elif policy.personal_ratio >= 0.999:
+        elif policy.personal_ratio >= 0.999 or policy.personal_ratio <= 0:
             max_pub = 0
         else:
             max_pub = int(p_count * (1.0 - policy.personal_ratio) / policy.personal_ratio)

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from llm_core.paths import config_dir, data_dir, repo_root
+from llm_core.paths import config_dir, data_dir
 
 
 @dataclass(frozen=True)
@@ -24,7 +24,11 @@ def _resolve_db_path(raw: str | None) -> Path:
     p = Path(raw)
     if p.is_absolute():
         return p
-    return repo_root() / p
+    # Relative paths live under data_dir (respects LLM_DATA_DIR).
+    parts = p.parts
+    if parts and parts[0] == "data":
+        p = Path(*parts[1:]) if len(parts) > 1 else Path(".")
+    return data_dir() / p
 
 
 def load_warehouse_config() -> WarehouseConfig:

@@ -7,10 +7,27 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from llm_dataprep.cursor_transcripts import _summarize_tool_input
+from llm_dataprep.message_blocks import (
+    USER_QUERY_RE,
+    normalize_role,
+    text_from_content_blocks,
+)
 from llm_dataprep.raw_io import append_records
 
 DEFAULT_ROOT = Path.home() / ".claude/projects"
+
+
+def _text_from_string(raw: str) -> str:
+    text = raw.strip()
+    m = USER_QUERY_RE.search(text)
+    return m.group(1).strip() if m else text
+
+
+def _should_skip_line(obj: dict[str, Any]) -> bool:
+    if obj.get("isCompactSummary") or obj.get("isSidechain"):
+        return True
+    kind = obj.get("type")
+    return isinstance(kind, str) and kind.lower() == "system"
 
 
 def iter_session_files(root: Path) -> Iterator[Path]:
@@ -19,45 +36,22 @@ def iter_session_files(root: Path) -> Iterator[Path]:
     yield from sorted(root.rglob("*.jsonl"))
 
 
-def _normalize_type(kind: str | None) -> str | None:
-    if kind == "human":
-        return "user"
-    if kind in ("user", "assistant"):
-        return kind
-    return None
-
-
 def _role_and_text(obj: dict[str, Any]) -> tuple[str | None, str]:
-    # Newer shape: type user/assistant/human + message string or object
-    role = _normalize_type(obj.get("type"))
-    if role:
-        msg = obj.get("message")
-        if isinstance(msg, str):
-            return role, msg.strip()
-        if isinstance(msg, dict):
-            content = msg.get("content")
-            if isinstance(content, str):
-                return role, content.strip()
-            if isinstance(content, list):
-                parts = []
-                for block in content:
-                    if not isinstance(block, dict):
-                        continue
-                    kind = block.get("type")
-                    if kind == "text":
-                        parts.append(block.get("text") or "")
-                    elif kind == "tool_use":
-                        name = block.get("name") or "tool"
-                        summary = _summarize_tool_input(block.get("input"))
-                        parts.append(f"[tool {name}] {summary}")
-                return role, "\n".join(p for p in parts if p).strip()
-    # Alternate: message.role + message.content (Cursor-like)
-    message = obj.get("message") or {}
-    if isinstance(message, dict):
-        role = message.get("role")
-        content = message.get("content")
-        if role in ("user", "assistant") and isinstance(content, str):
-            return role, content.strip()
+    role = normalize_role(obj)
+    if not role:
+        return None, ""
+
+    msg = obj.get("message")
+    if isinstance(msg, str):
+        return role, _text_from_string(msg)
+    if isinstance(msg, dict):
+        content = msg.get("content")
+        if isinstance(content, str):
+            return role, _text_from_string(content)
+        if isinstance(content, list):
+            text, _ = text_from_content_blocks(content, include_tool_use=True)
+            return role, text
+
     return None, ""
 
 
@@ -85,6 +79,8 @@ def ingest(
                     try:
                         obj = json.loads(line)
                     except json.JSONDecodeError:
+                        continue
+                    if _should_skip_line(obj):
                         continue
                     role, text = _role_and_text(obj)
                     if not role or not text or len(text) > 200_000:

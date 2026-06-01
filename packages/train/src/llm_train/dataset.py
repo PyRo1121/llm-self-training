@@ -109,7 +109,7 @@ def load_messages_dataset(
 def sample_weights_from_dataset(dataset: Dataset, cfg: dict[str, Any]) -> list[float]:
     """Per-row weights after any filter — reads _sample_weight / _data_source columns."""
     personal_w = float(cfg.get("personal_sample_weight", 1.0))
-    public_w = float(cfg.get("public_sample_weight", 0.35))
+    public_w = float(cfg.get("public_sample_weight", 0.25))
     cols = dataset.column_names if hasattr(dataset, "column_names") else []
     out: list[float] = []
     for i in range(len(dataset)):

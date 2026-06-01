@@ -318,17 +318,28 @@ def kill_nvidia_smi_gpu_hogs(
     *,
     root_pid: int | None = None,
     min_mib: int = 200,
+    settings: dict[str, Any] | None = None,
 ) -> int:
-    """SIGKILL any alive GPU compute PID above min_mib (incl. nvidia [Not Found] rows)."""
+    """SIGKILL GPU compute PIDs classified as kill (incl. nvidia [Not Found] rows)."""
     root = root_pid or os.getpid()
     protected = process_tree_pids(root)
+    cfg = {**(settings or load_gpu_mutex_settings())}
+    cfg["min_competitor_mib"] = min_mib
     killed = 0
     for pid, name, mem in gpu_compute_processes():
-        if pid in protected or mem < min_mib:
-            continue
         if not _proc_exists(pid):
             continue
         cmd = _cmdline(pid)
+        decision = classify_gpu_competitor(
+            pid=pid,
+            name=name,
+            mem_mib=mem,
+            cmdline=cmd,
+            protected_pids=protected,
+            settings=cfg,
+        )
+        if decision != "kill":
+            continue
         _log(
             f"GPU reclaim: SIGKILL pid={pid} {name} ({mem} MiB) "
             f"cmd={cmd[:120]!r}"

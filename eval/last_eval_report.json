@@ -2,7 +2,7 @@
   "model": "qwen2.5-coder:7b",
   "ollama_host": "http://127.0.0.1:11434",
   "strict": true,
-  "evaluated_at": "2026-06-01T00:25:54.658522+00:00",
+  "evaluated_at": "2026-06-01T00:48:29.032740+00:00",
   "suites": [
     {
       "suite": "diff_apply",

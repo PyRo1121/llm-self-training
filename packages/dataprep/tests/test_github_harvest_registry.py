@@ -11,6 +11,7 @@ from llm_dataprep.github_harvest import (
 )
 from llm_dataprep.github_harvest_registry import (
     HARVEST_QUERY_REGISTRY,
+    query_has_github_search_term,
     registry_queries,
 )
 
@@ -34,6 +35,15 @@ def test_registry_covers_major_harnesses() -> None:
 
 def test_registry_has_33_queries() -> None:
     assert len(HARVEST_QUERY_REGISTRY) == 33
+
+
+def test_registry_queries_have_github_search_term() -> None:
+    bad = [
+        q["id"]
+        for q in HARVEST_QUERY_REGISTRY
+        if not query_has_github_search_term(q["q"])
+    ]
+    assert not bad, f"queries missing GitHub bare search term: {bad}"
 
 
 def test_registry_queries_tier_a_sorted_first() -> None:
@@ -209,3 +219,38 @@ github_harvest:
     cfg = load_harvest_config(cfg_file)
     assert len(cfg.queries) == len(registry_queries(disabled=("aider_chat_history",)))
     assert all(q["id"] != "aider_chat_history" for q in cfg.queries)
+
+
+def test_registry_queries_enabled_filter() -> None:
+    enabled = ("cursor_agent_transcripts", "codex_rollout_sessions")
+    qs = registry_queries(enabled=enabled)
+    assert len(qs) == 2
+    assert {q["id"] for q in qs} == set(enabled)
+
+
+def test_opencode_storage_part_path_regex() -> None:
+    cfg = HarvestConfig(exclude_path_regex=())
+    qspec = next(q for q in HARVEST_QUERY_REGISTRY if q["id"] == "opencode_storage_part")
+    assert should_accept_path(
+        ".local/share/opencode/storage/part/sess123/part-uuid.json",
+        qspec,
+        cfg,
+    )
+
+
+def test_load_config_enabled_queries_filter(tmp_path) -> None:
+    from llm_dataprep.github_harvest import load_harvest_config
+
+    enabled = ["cursor_agent_transcripts", "gemini_cli_chats"]
+    cfg_file = tmp_path / "github-harvest.yaml"
+    cfg_file.write_text(
+        f"""
+github_harvest:
+  queries: registry
+  enabled_queries: {json.dumps(enabled)}
+""",
+        encoding="utf-8",
+    )
+    cfg = load_harvest_config(cfg_file)
+    assert len(cfg.queries) == len(registry_queries(enabled=tuple(enabled)))
+    assert {q["id"] for q in cfg.queries} == set(enabled)

@@ -12,9 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, TextIO
 
-import yaml
-
 from llm_core import data_dir
+from llm_core.yaml_config import load_yaml_config
 from llm_dataprep.filters import SafetyFinding, SafetyReport, scan_presidio_batch, scan_regex
 from llm_dataprep.perf import presidio_n_process, presidio_session_batch, worker_count
 from llm_dataprep.safety_policy import (
@@ -28,17 +27,6 @@ from llm_dataprep.safety_policy import (
 from llm_dataprep.safety_quarantine import load_safety_failure_keys, session_has_quarantined_row
 from llm_dataprep.style_tags import enrich_meta
 from llm_dataprep.tier1 import assign_train_tier
-
-
-def _load_curation_config() -> dict[str, Any]:
-    from llm_core import config_dir
-
-    path = config_dir() / "default.yaml"
-    if not path.is_file():
-        return {}
-    with path.open(encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh) or {}
-    return doc.get("curation") or {}
 
 
 def _curation_for_session(rows: list[dict[str, Any]], cfg: dict[str, Any]) -> dict[str, Any]:
@@ -687,7 +675,7 @@ def main() -> None:
                 flush=True,
             )
 
-    cfg = _load_curation_config()
+    cfg = load_yaml_config().get("curation") or {}
     use_gitleaks = bool(args.session_gitleaks) and not args.no_gitleaks
     use_presidio = not args.no_presidio
     n_workers = worker_count("CURATE_WORKERS") if args.workers is None else max(1, args.workers)

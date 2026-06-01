@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
@@ -58,6 +59,64 @@ def _build_repo_fragment(
     return "\n".join(lines)
 
 
+def _header(headers: dict[str, str], name: str) -> str | None:
+    return headers.get(name.lower())
+
+
+def _parse_reset_at(headers: dict[str, str]) -> float | None:
+    reset = _header(headers, "x-ratelimit-reset")
+    if reset is None:
+        return None
+    try:
+        return float(reset)
+    except ValueError:
+        return None
+
+
+def _backoff_seconds(
+    attempt: int,
+    *,
+    retry_after: str | None,
+    reset_at: float | None,
+    base: float = 2.0,
+    max_sleep: float = 300.0,
+) -> float:
+    """Exponential backoff with Retry-After / X-RateLimit-Reset preference."""
+    if retry_after:
+        try:
+            return min(max_sleep, max(1.0, float(retry_after)))
+        except ValueError:
+            pass
+    if reset_at is not None:
+        return min(max_sleep, max(1.0, reset_at - time.time() + 1.0))
+    return min(max_sleep, base * (2**attempt))
+
+
+def _is_rate_limited_errors(errors: list[Any]) -> bool:
+    for err in errors:
+        if not isinstance(err, dict):
+            continue
+        if err.get("type") == "RATE_LIMITED":
+            return True
+        msg = err.get("message")
+        if isinstance(msg, str) and "rate limit" in msg.lower():
+            return True
+    return False
+
+
+def _should_retry_rate_limit(
+    headers: dict[str, str],
+    errors: list[Any],
+    *,
+    data: Any,
+) -> bool:
+    if _is_rate_limited_errors(errors):
+        return True
+    if data is None and _header(headers, "x-ratelimit-remaining") == "0":
+        return True
+    return False
+
+
 def build_batch_query(groups: list[tuple[str, str, str, list[tuple[str, BlobRequest]]]]) -> str:
     """groups: (repo_alias, owner, name, [(field_alias, req), ...])"""
     parts = ["query FetchBlobs {"]
@@ -94,6 +153,7 @@ class GraphQLBlobFetcher:
                 },
                 method="POST",
             )
+            headers: dict[str, str] = {}
             try:
                 with urllib.request.urlopen(req, timeout=120) as resp:
                     headers = {k.lower(): v for k, v in resp.headers.items()}
@@ -101,16 +161,45 @@ class GraphQLBlobFetcher:
                         self._on_rate_limit(headers)
                     body = json.loads(resp.read().decode("utf-8"))
             except urllib.error.HTTPError as exc:
+                err_headers = {k.lower(): v for k, v in exc.headers.items()}
+                if self._on_rate_limit:
+                    self._on_rate_limit(err_headers)
                 if exc.code in (403, 429, 502, 503) and attempt + 1 < self._max_retries:
-                    import time
-
-                    time.sleep(min(60.0, 2.0 * (2**attempt)))
+                    exc.read()
+                    sleep_s = _backoff_seconds(
+                        attempt,
+                        retry_after=err_headers.get("retry-after"),
+                        reset_at=_parse_reset_at(err_headers),
+                    )
+                    print(
+                        f"github: GraphQL HTTP {exc.code} — backoff {sleep_s:.0f}s "
+                        f"(attempt {attempt + 1}/{self._max_retries})",
+                        flush=True,
+                    )
+                    time.sleep(sleep_s)
                     continue
                 detail = exc.read().decode("utf-8", errors="replace")[:500]
                 raise RuntimeError(f"GraphQL HTTP {exc.code}: {detail}") from exc
 
             errors = body.get("errors") or []
             data = body.get("data")
+            if _should_retry_rate_limit(headers, errors, data=data):
+                if attempt + 1 >= self._max_retries:
+                    if errors:
+                        raise RuntimeError(f"GraphQL errors: {errors[:3]}")
+                    raise RuntimeError("GraphQL rate limited after retries")
+                sleep_s = _backoff_seconds(
+                    attempt,
+                    retry_after=headers.get("retry-after"),
+                    reset_at=_parse_reset_at(headers),
+                )
+                print(
+                    f"github: GraphQL rate limited — backoff {sleep_s:.0f}s "
+                    f"(attempt {attempt + 1}/{self._max_retries})",
+                    flush=True,
+                )
+                time.sleep(sleep_s)
+                continue
             if data is None:
                 if errors:
                     raise RuntimeError(f"GraphQL errors: {errors[:3]}")

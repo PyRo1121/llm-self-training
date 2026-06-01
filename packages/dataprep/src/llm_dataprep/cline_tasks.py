@@ -38,17 +38,61 @@ def _messages_from_api_history(data: list[Any]) -> Iterator[tuple[str, str]]:
             yield role, text
 
 
+_USER_SAY = frozenset({"task", "user_feedback", "user_feedback_diff"})
+_ASSIST_SAY = frozenset({"text", "reasoning", "completion_result"})
+
+
+def _ui_role(item: dict[str, Any]) -> str | None:
+    role = item.get("role")
+    if isinstance(role, str):
+        role_key = role.lower()
+        if role_key in ("user", "assistant"):
+            return role_key
+
+    msg_type = item.get("type")
+    if not isinstance(msg_type, str):
+        return None
+    msg_type = msg_type.lower()
+    if msg_type in ("user", "assistant"):
+        return msg_type
+    if msg_type == "say":
+        say = item.get("say")
+        if say in _USER_SAY:
+            return "user"
+        if say in _ASSIST_SAY:
+            return "assistant"
+        return None
+    if msg_type == "ask" and item.get("ask") is not None:
+        return "assistant"
+    return None
+
+
+def _ui_text(item: dict[str, Any]) -> str:
+    parts: list[str] = []
+    text = item.get("text") or item.get("content") or ""
+    if isinstance(text, list):
+        text = "\n".join(str(x) for x in text)
+    text = str(text).strip()
+    if text:
+        parts.append(text)
+    reasoning = item.get("reasoning")
+    if isinstance(reasoning, str):
+        reasoning = reasoning.strip()
+        if reasoning:
+            parts.append(reasoning)
+    return "\n".join(parts).strip()
+
+
 def _messages_from_ui(data: list[Any]) -> Iterator[tuple[str, str]]:
     for item in data:
         if not isinstance(item, dict):
             continue
-        role = item.get("role") or item.get("type")
-        if role not in ("user", "assistant"):
+        if item.get("partial"):
             continue
-        text = item.get("text") or item.get("content") or ""
-        if isinstance(text, list):
-            text = "\n".join(str(x) for x in text)
-        text = str(text).strip()
+        role = _ui_role(item)
+        if role is None:
+            continue
+        text = _ui_text(item)
         if text:
             yield role, text
 

@@ -32,7 +32,7 @@ Central file: `config/default.yaml`. Loaded by package-specific helpers — not 
 | `num_epochs` | 1 | 1 |
 | `seed` | 3407 | 3407 |
 
-**From `training_mix` (injected into train_settings):** `personal_sample_weight: 1.0`, `public_sample_weight: 0.35`
+**From `training_mix` (injected into train_settings):** `personal_sample_weight: 1.0`, `public_sample_weight: 0.25`
 
 ### Decensor (`--decensor`)
 
@@ -113,10 +113,10 @@ CLI: `--no-gpu-mutex`, `--gpu-reclaim-warn-only`, `--gpu-reclaim-conservative`
 | Key | Default |
 |-----|---------|
 | `prioritize_personal` | true |
-| `personal_ratio` | 0.80 |
+| `personal_ratio` | 1.0 (personal-only default; set 0.80 for 80/20 public cap) |
 | `public_cap` | null |
 | `personal_sample_weight` | 1.0 |
-| `public_sample_weight` | 0.35 |
+| `public_sample_weight` | 0.25 |
 | `public_dataset_priority` | ordered list — see yaml |
 
 ## `curation`

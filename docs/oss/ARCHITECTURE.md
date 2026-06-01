@@ -142,7 +142,7 @@ agent-ingest / public-ingest
 
 ### Public data
 
-Registry in `packages/dataprep/src/llm_dataprep/public/registry.py`. Config caps in `config/default.yaml` → `public_datasets`. Mix policy: 80% personal / 20% public with sample weights 1.0 / 0.35.
+Registry in `packages/dataprep/src/llm_dataprep/public/registry.py`. Config caps in `config/default.yaml` → `public_datasets`. Mix policy default: **personal-only** (`personal_ratio: 1.0`); optional 80/20 via `PERSONAL_RATIO=0.8`. Sample weights 1.0 / 0.25 when public rows are included.
 
 ## Training stack
 

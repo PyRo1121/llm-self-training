@@ -44,7 +44,11 @@ def is_placeholder_task(task: dict[str, Any]) -> bool:
     return False
 
 
+def suite_names() -> list[str]:
+    return list(SUITE_FILES)
+
+
 def suite_is_placeholder_only(tasks: list[dict[str, Any]]) -> bool:
     if not tasks:
-        return True
+        return False
     return all(is_placeholder_task(t) for t in tasks)

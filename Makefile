@@ -89,21 +89,23 @@ ingest-list: ## List agent harnesses
 	$(UV) llm-dataprep agent-ingest --list-harnesses
 
 public-ingest: sync-dataprep ## Pull HF public datasets → data/raw (fast local parquet default)
-	$(if $(HF_TOKEN),HF_TOKEN=$(HF_TOKEN),) \
+	@if [ -f .env ]; then set -a; source .env; set +a; fi; \
+	$(if $(HF_TOKEN),export HF_TOKEN='$(HF_TOKEN)';,) \
 	HF_XET_HIGH_PERFORMANCE=1 HF_XET_NUM_CONCURRENT_RANGE_GETS=24 \
 	$(UV) llm-dataprep public-ingest \
 		$(if $(PUBLIC_DATASETS),--datasets $(PUBLIC_DATASETS),) \
 		$(if $(PUBLIC_MAX_ROWS),--max-rows $(PUBLIC_MAX_ROWS),) \
-		$(if $(HF_TOKEN),,--skip-gated) \
+		$$( [ -n "$${HF_TOKEN:-}" ] || echo --skip-gated ) \
 		$(if $(PUBLIC_REFRESH),--refresh-download,) \
 		--replace
 
 public-ingest-stream: sync-dataprep ## Legacy Hub streaming ingest (slow; debugging only)
-	$(if $(HF_TOKEN),HF_TOKEN=$(HF_TOKEN),) \
+	@if [ -f .env ]; then set -a; source .env; set +a; fi; \
+	$(if $(HF_TOKEN),export HF_TOKEN='$(HF_TOKEN)';,) \
 	$(UV) llm-dataprep public-ingest --remote-stream \
 		$(if $(PUBLIC_DATASETS),--datasets $(PUBLIC_DATASETS),) \
 		$(if $(PUBLIC_MAX_ROWS),--max-rows $(PUBLIC_MAX_ROWS),) \
-		$(if $(HF_TOKEN),,--skip-gated) \
+		$$( [ -n "$${HF_TOKEN:-}" ] || echo --skip-gated ) \
 		--replace
 
 public-list: ## List public dataset registry
@@ -223,7 +225,7 @@ train-cloud-smoke: ## Vast H100 smoke (5 train steps)
 	bash scripts/cloud/run-vast.sh --smoke-only
 
 .PHONY: manifest manifest-personal manifest-mixed extract extract-personal extract-mixed
-manifest: manifest-mixed ## Default: 80/20 personal/public mix (config training_mix)
+manifest: manifest-mixed ## Default: personal-first mix (config training_mix; set PERSONAL_RATIO=0.8 for 80/20)
 
 manifest-mixed: warehouse-smoke ## Build mixed manifest (personal + public datasets)
 	$(UV) llm-dataprep training-manifest \
@@ -263,7 +265,7 @@ parse-all-public: ## Full public parse smallest→largest (ingest+scan+curate); 
 
 data-public-fast: public-ingest curate-fast warehouse-load ## Public ingest + fast curate (no presidio)
 
-prepare-mixed: extract-mixed ## Manifest + extract for mixed train (80/20)
+prepare-mixed: extract-mixed ## Manifest + extract for mixed train (override PERSONAL_RATIO in env)
 prepare-personal: extract-personal ## Manifest + extract personal-only
 
 # =============================================================================
@@ -386,5 +388,5 @@ cloud-jarvis: ## Jarvis H100 full managed run (jl CLI)
 cloud-train-local: sync-all ## Full cloud pipeline on this machine (needs GPU)
 	LLM_CONFIG_PROFILE=cloud-h100 bash scripts/cloud/train-cloud.sh \
 		--run pyro-coder-h100-v1 \
-		--personal-dataset $(HF_DATASET) \
-		--personal-ratio $(PERSONAL_RATIO)
+		$(if $(HF_DATASET),--personal-dataset $(HF_DATASET),) \
+		$(if $(PERSONAL_RATIO),--personal-ratio $(PERSONAL_RATIO),)

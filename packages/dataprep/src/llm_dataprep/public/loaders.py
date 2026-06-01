@@ -8,13 +8,13 @@ import os
 from pathlib import Path
 from typing import Any, Iterator
 
-logger = logging.getLogger(__name__)
-
 from llm_dataprep.public.records import (
     _message_text,
     iter_messages_records,
     make_record,
 )
+
+logger = logging.getLogger(__name__)
 
 _LOADER_CTX: dict[str, Any] = {"local_dir": None, "shard_files": None}
 
@@ -50,7 +50,9 @@ def _active_shard_files(
     ctx = _LOADER_CTX.get("shard_files")
     if ctx:
         return [Path(p) for p in ctx]
-    return sorted(root.rglob("*.parquet"))
+    from llm_dataprep.public.hf_cache import list_parquet_shards
+
+    return list_parquet_shards(root)
 
 _CODE_HINTS = frozenset(
     {

@@ -194,13 +194,13 @@ Same as curated plus manifest fields:
 | Source | Default weight | Config key |
 |--------|------------------|------------|
 | personal | 1.0 | `training_mix.personal_sample_weight` |
-| public | 0.35 | `training_mix.public_sample_weight` |
+| public | 0.25 | `training_mix.public_sample_weight` |
 
 Loader adds columns `_sample_weight` (floor 0.05) and `_data_source` for `WeightedRandomSampler`.
 
 ### Mix policy
 
-With `personal_ratio: 0.80` and `prioritize_personal: true`:
+With `personal_ratio: 1.0` (default) and `prioritize_personal: true`, public rows are capped out unless you lower `personal_ratio` (e.g. 0.80):
 
 - All personal tier-1 rows included
 - Public capped at `floor(personal_count × 0.25)` unless `public_cap` set

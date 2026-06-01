@@ -1,2 +1,1 @@
-def hello() -> str:
-    return "Hello from llm-eval!"
+"""Internal eval suites — verdict-gated promote."""

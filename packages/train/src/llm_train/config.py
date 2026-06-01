@@ -144,7 +144,7 @@ def train_settings(*, promote: bool = False, decensor: bool = False) -> dict[str
         "neftune_noise_alpha": train.get("neftune_noise_alpha"),
         "seed": int(train.get("seed", 3407)),
         "personal_sample_weight": float(mix.get("personal_sample_weight", 1.0)),
-        "public_sample_weight": float(mix.get("public_sample_weight", 0.35)),
+        "public_sample_weight": float(mix.get("public_sample_weight", 0.25)),
     }
     if promote:
         cfg = _merge_profile(cfg, train.get("promote") or {})

@@ -23,6 +23,7 @@ def _recognizers_by_entity() -> dict[str, object]:
         ("CURSOR_TOKEN", "key cursor_" + "b" * 25 + " here"),
         ("TURSO_TOKEN", "db libsql://user:pass@host-abc.turso.io/v2"),
         ("TURSO_TOKEN", "turso_" + "c" * 20),
+        ("TURSO_TOKEN", "TURSO_" + "d" * 20),
     ],
 )
 def test_pattern_recognizer_detects_without_spacy(entity: str, text: str) -> None:

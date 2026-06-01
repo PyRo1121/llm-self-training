@@ -47,7 +47,7 @@ Produces `data/train/personal-only.jsonl` and trains to `runs/pyro-coder-bootstr
 ```bash
 export HF_TOKEN=hf_...   # optional, for gated sets
 make data-public         # ingest → curate → warehouse
-make train               # 80/20 mix from config
+make train               # personal-first mix from config (PERSONAL_RATIO=0.8 for 80/20)
 ```
 
 ## Workflows
@@ -117,7 +117,7 @@ Config: `safety` block in `config/default.yaml` + `config/safety-allowlist.yaml`
 ### Prepare train file
 
 ```bash
-make prepare-mixed        # → data/train/personal-first.jsonl (80/20)
+make prepare-mixed        # → data/train/personal-first.jsonl (default personal-only; PERSONAL_RATIO=0.8 for mixed)
 make prepare-personal     # → data/train/personal-only.jsonl
 ```
 

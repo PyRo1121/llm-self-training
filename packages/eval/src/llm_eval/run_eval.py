@@ -13,7 +13,7 @@ import httpx
 
 from llm_core.control_plane import ensure_warehouse, register_benchmark_run
 from llm_core.paths import eval_dir, runs_dir
-from llm_eval.suites import load_suite, suite_is_placeholder_only
+from llm_eval.suites import load_suite, suite_is_placeholder_only, suite_names
 
 
 def _utc_now() -> str:
@@ -28,6 +28,14 @@ def _ollama_models(host: str) -> set[str]:
         return {m.get("name", "") for m in data.get("models", [])}
     except Exception:
         return set()
+
+
+def _smoke_prompt(suite: str, task: dict[str, Any]) -> str:
+    if suite == "retrieval_gold":
+        text = task.get("query") or task.get("prompt") or "Say OK."
+    else:
+        text = task.get("prompt") or "Say OK."
+    return str(text)[:500]
 
 
 def _ollama_chat(host: str, model: str, prompt: str) -> str:
@@ -53,6 +61,16 @@ def evaluate_suite(
     smoke_chat: bool,
 ) -> dict[str, Any]:
     tasks = load_suite(name)
+
+    if not tasks:
+        return {
+            "suite": name,
+            "verdict": "fail",
+            "reason": "empty_suite",
+            "tasks": 0,
+            "passed": 0,
+        }
+
     placeholder_only = suite_is_placeholder_only(tasks)
 
     if placeholder_only:
@@ -78,7 +96,7 @@ def evaluate_suite(
             reply = _ollama_chat(
                 ollama_host,
                 model,
-                str(tasks[0].get("prompt", "Say OK."))[:500],
+                _smoke_prompt(name, tasks[0]),
             )
             if len(reply.strip()) >= 2:
                 passed = 1
@@ -114,7 +132,7 @@ def run_all(
     smoke_chat: bool,
     train_run: str | None,
 ) -> dict[str, Any]:
-    suites = ["diff_apply", "style", "debug", "retrieval_gold"]
+    suites = suite_names()
     results = [
         evaluate_suite(
             s,

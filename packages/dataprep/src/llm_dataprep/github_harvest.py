@@ -42,6 +42,7 @@ from llm_dataprep.github_harvest_registry import (
     DEFAULT_EXCLUDE_PATH_REGEX,
     registry_queries,
 )
+from llm_dataprep.message_blocks import USER_QUERY_RE, text_from_content_blocks
 from llm_dataprep.raw_io import append_records_buffered, dated_raw_path
 
 API_ROOT = "https://api.github.com"
@@ -387,7 +388,7 @@ class GitHubClient:
             headers["Authorization"] = f"Bearer {self._token_provider()}"
         if accept:
             headers["Accept"] = accept
-            headers["X-GitHub-Api-Version"] = "2022-11-28"
+            headers["X-GitHub-Api-Version"] = "2026-03-10"
         return headers
 
     def _apply_rate_limit_headers(self, headers: dict[str, str]) -> None:
@@ -416,7 +417,6 @@ class GitHubClient:
         snap = self._bucket("core")
         rem = snap.remaining
         reset_at = snap.reset_at
-        resource = snap.resource or "core"
         if rem is None:
             return
         if rem >= self._low_remaining_threshold:
@@ -585,7 +585,7 @@ class GitHubClient:
                     return data
             except GitHubFetchError as exc:
                 if exc.gone:
-                    errors.append(f"raw CDN: gone")
+                    errors.append("raw CDN: gone")
                 else:
                     raise
             except RuntimeError as exc:
@@ -742,6 +742,12 @@ def should_accept_path(path: str, query_spec: dict[str, Any], cfg: HarvestConfig
     return True
 
 
+_OPENHANDS_DETECT_PATH_REGEX = (
+    r"(?i)(?:^|/)\.openhands-state/sessions/[^/]+/events/.+\.json$",
+    r"(?i)(?:^|/)conversations/.+/events/.+\.json$",
+)
+
+
 def detect_harness(path: str, hint: str | None = None) -> str:
     if hint and hint != "generic":
         return hint
@@ -780,7 +786,7 @@ def detect_harness(path: str, hint: str | None = None) -> str:
         return "openclaw"
     if ".openclaw/" in p:
         return "openclaw"
-    if ".openhands-state/" in p or ("/conversations/" in p and "/events/" in p):
+    if _path_matches_any(path, _OPENHANDS_DETECT_PATH_REGEX):
         return "openhands"
     if "/amp/threads/" in p or ".local/share/amp/threads/" in p:
         return "amp"
@@ -1640,18 +1646,6 @@ def _parse_claude_lines(
         yield rec
 
 
-def _text_from_qwen_content(content: Any) -> str:
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts: list[str] = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                parts.append(block.get("text") or "")
-        return "\n".join(p for p in parts if p).strip()
-    return ""
-
-
 def _text_from_qwen_message(obj: dict[str, Any]) -> tuple[str | None, str]:
     """Qwen Code CLI ChatRecord / stream-json: message.parts[] or message.content[]."""
     mtype = obj.get("type")
@@ -1667,12 +1661,20 @@ def _text_from_qwen_message(obj: dict[str, Any]) -> tuple[str | None, str]:
             ).strip()
             if text:
                 return role, text
-        text = _text_from_qwen_content(message.get("content"))
+    for content in (
+        (message.get("content") if isinstance(message, dict) else None),
+        obj.get("content"),
+    ):
+        if isinstance(content, str):
+            text = content.strip()
+            m = USER_QUERY_RE.search(text)
+            text = m.group(1).strip() if m else text
+        elif isinstance(content, list):
+            text, _ = text_from_content_blocks(content)
+        else:
+            continue
         if text:
             return role, text
-    text = _text_from_qwen_content(obj.get("content"))
-    if text:
-        return role, text
     return None, ""
 
 

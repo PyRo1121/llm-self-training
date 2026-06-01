@@ -170,9 +170,6 @@ unsloth:
   max_seq_moderate_vram_fa: 2048   # FA2 + free < 9.5 GiB (browser closed → usually 2048)
   vram_probe_batch_size: 2         # only when FA2 + free≥10 GiB (see vram_budget.py)
   step0_headroom_mib: 1200         # min free MiB after model load (fused LoRA MLP step-0)
-  eval_holdout_ratio: 0.10
-  eval_steps: 32
-  eval_step_divisor: 6
   load_best_model_at_end: true
   optim: adamw_8bit
   max_grad_norm: 1.0               # NOT 0.3 — 0.3 diverged on Chronicals promote-v2

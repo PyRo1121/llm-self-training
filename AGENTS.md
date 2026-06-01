@@ -84,7 +84,7 @@ make warehouse-smoke          # or: uv run --package llm-core warehouse-smoke
 make gpu-clear                # or: uv run --package llm-core clear-gpu-vram
 make prepare-mixed            # manifest + extract → data/train/personal-first.jsonl
 make train-smoke
-make train                    # mixed 80/20; make train-personal for personal-only
+make train                    # personal-first (config); make train-personal; PERSONAL_RATIO=0.8 for mixed
 make phase2-done RUN=pyro-coder-bootstrap
 make test                     # pytest gpu_mutex
 ```

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from llm_eval.run_eval import evaluate_suite
+from llm_eval.run_eval import _smoke_prompt, evaluate_suite, run_all
+from llm_eval.suites import SUITE_FILES
 
 _PLACEHOLDER = {
     "id": "example-001",
@@ -17,6 +18,23 @@ _REAL = {
     "repo": "acme/app",
     "prompt": "Fix the null check in auth middleware.",
 }
+
+
+@patch("llm_eval.run_eval.load_suite")
+def test_empty_suite_always_fails(mock_load) -> None:
+    mock_load.return_value = []
+    for strict, smoke_chat in ((False, False), (False, True), (True, False)):
+        row = evaluate_suite(
+            "diff_apply",
+            model="qwen2.5-coder:7b",
+            ollama_host="http://127.0.0.1:11434",
+            strict=strict,
+            smoke_chat=smoke_chat,
+        )
+        assert row["verdict"] == "fail"
+        assert row["reason"] == "empty_suite"
+        assert row["tasks"] == 0
+        assert row["passed"] == 0
 
 
 @patch("llm_eval.run_eval.load_suite")
@@ -64,6 +82,12 @@ def test_real_suite_no_smoke_not_pass(mock_load) -> None:
     assert row["passed"] == 0
 
 
+def test_smoke_prompt_retrieval_uses_query() -> None:
+    task = {"query": "Where is config?", "prompt": "ignored for retrieval"}
+    assert _smoke_prompt("retrieval_gold", task) == "Where is config?"
+    assert _smoke_prompt("debug", task) == "ignored for retrieval"
+
+
 @patch("llm_eval.run_eval._ollama_chat", return_value="OK")
 @patch("llm_eval.run_eval.load_suite")
 def test_real_suite_smoke_chat_passes(mock_load, _chat) -> None:
@@ -80,6 +104,27 @@ def test_real_suite_smoke_chat_passes(mock_load, _chat) -> None:
     assert row["passed"] == 1
 
 
+@patch("llm_eval.run_eval._ollama_chat", return_value="OK")
+@patch("llm_eval.run_eval.load_suite")
+def test_retrieval_smoke_sends_query_not_prompt(mock_load, mock_chat) -> None:
+    mock_load.return_value = [
+        {
+            "id": "rag-1",
+            "query": "Where is training config?",
+            "prompt": "wrong field for smoke",
+        }
+    ]
+    evaluate_suite(
+        "retrieval_gold",
+        model="qwen2.5-coder:7b",
+        ollama_host="http://127.0.0.1:11434",
+        strict=False,
+        smoke_chat=True,
+    )
+    mock_chat.assert_called_once()
+    assert mock_chat.call_args[0][2] == "Where is training config?"
+
+
 @patch("llm_eval.run_eval._ollama_chat", return_value="")
 @patch("llm_eval.run_eval.load_suite")
 def test_real_suite_smoke_chat_empty_reply_fails(mock_load, _chat) -> None:
@@ -93,3 +138,24 @@ def test_real_suite_smoke_chat_empty_reply_fails(mock_load, _chat) -> None:
     )
     assert row["verdict"] == "fail"
     assert row["passed"] == 0
+
+
+@patch("llm_eval.run_eval.evaluate_suite")
+def test_run_all_iterates_suite_files_keys(mock_eval) -> None:
+    mock_eval.return_value = {
+        "suite": "x",
+        "verdict": "pass",
+        "reason": "smoke_chat",
+        "tasks": 1,
+        "passed": 1,
+    }
+    report = run_all(
+        model="qwen2.5-coder:7b",
+        ollama_host="http://127.0.0.1:11434",
+        strict=False,
+        smoke_chat=False,
+        train_run=None,
+    )
+    called = [c.args[0] for c in mock_eval.call_args_list]
+    assert called == list(SUITE_FILES)
+    assert len(report["suites"]) == len(SUITE_FILES)

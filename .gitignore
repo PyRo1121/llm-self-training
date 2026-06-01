@@ -76,6 +76,7 @@ config/cloud.env
 credentials.json
 secrets.yaml
 secrets.yml
+config/kaggle.json
 **/HF_TOKEN
 .aws/
 

@@ -214,7 +214,16 @@ def gitleaks_sidecar_line_flags(
         try:
             subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s, check=False)
         except (subprocess.TimeoutExpired, OSError):
-            return flags
+            first_line = rows[0][0]
+            return {
+                first_line: [
+                    SafetyFinding(
+                        source="gitleaks",
+                        kind="scan_error",
+                        detail="gitleaks sidecar dir failed or timed out",
+                    )
+                ]
+            }
 
         if not report.is_file():
             return flags

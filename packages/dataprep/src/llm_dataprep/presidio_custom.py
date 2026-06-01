@@ -25,7 +25,7 @@ _CURSOR_PATTERN = Pattern(
 )
 _TURSO_PATTERNS = (
     Pattern(name="libsql_url", regex=r"(?i)libsql://[^\s\"']+", score=0.9),
-    Pattern(name="turso_prefix", regex=r"turso_[A-Za-z0-9_]{16,}", score=0.9),
+    Pattern(name="turso_prefix", regex=r"(?i)turso_[A-Za-z0-9_]{16,}", score=0.9),
 )
 
 

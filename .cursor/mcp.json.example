@@ -2,20 +2,18 @@
   "mcpServers": {
     "_comment": "Copy entries to ~/.cursor/mcp.json — never commit secrets",
     "mobus": {
-      "_comment": "Dataset search across 20+ platforms — https://github.com/mobus-ai/Mobus",
-      "url": "https://mcp.mobus.ai/mcp"
-    },
-    "mobus-local": {
-      "_comment": "Optional self-host; clone Mobus, npm install && npm run build, then use dist/main.js",
+      "_comment": "Local Mobus — Kaggle + HF need env; creds in ~/.kaggle/kaggle.json copied into env below",
       "command": "node",
-      "args": ["/absolute/path/to/Mobus/dist/main.js"],
+      "args": ["/home/pyro1121/Documents/Mobus/dist/main.js"],
       "env": {
         "HF_TOKEN": "",
         "KAGGLE_USERNAME": "",
-        "KAGGLE_KEY": "",
-        "GOOGLE_API_KEY": "",
-        "GOOGLE_CSE_ID": ""
+        "KAGGLE_KEY": ""
       }
+    },
+    "mobus-cloud": {
+      "_comment": "Hosted fallback — HF only; Kaggle adapter has no user keys",
+      "url": "https://mcp.mobus.ai/mcp"
     }
   }
 }
