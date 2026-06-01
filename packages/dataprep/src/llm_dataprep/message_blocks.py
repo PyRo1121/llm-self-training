@@ -102,3 +102,22 @@ def text_from_content_blocks(
                 summary = _summarize_tool_input(block.get("input"))
                 parts.append(f"[tool {name}] {summary}")
     return "\n".join(p for p in parts if p).strip(), has_tool
+
+
+def role_and_text_from_opencode(obj: dict[str, Any]) -> tuple[str | None, str]:
+    """OpenCode legacy message JSON (role + parts[])."""
+    info = obj.get("info")
+    if isinstance(info, dict):
+        role = info.get("role")
+        parts = obj.get("parts") or info.get("parts")
+    else:
+        role = obj.get("role")
+        parts = obj.get("parts") or obj.get("content")
+    text = ""
+    if isinstance(parts, list):
+        for part in parts:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text += (part.get("text") or "") + "\n"
+    elif isinstance(obj.get("text"), str):
+        text = obj["text"]
+    return role, text.strip()

@@ -23,9 +23,11 @@ def test_iter_raw_records_skips_blank_and_parse_errors(tmp_path: Path) -> None:
     raw = tmp_path / "mixed.jsonl"
     raw.write_text(
         "\n"
-        + json.dumps({"text": "ok"}) + "\n"
+        + json.dumps({"text": "ok"})
+        + "\n"
         + "{not json\n"
-        + json.dumps([1, 2, 3]) + "\n",
+        + json.dumps([1, 2, 3])
+        + "\n",
         encoding="utf-8",
     )
     rows = list(iter_raw_records(raw))
@@ -84,7 +86,8 @@ def test_presidio_batch_findings_applied(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     raw = tmp_path / "pii.jsonl"
-    raw.write_text(json.dumps({"text": "Contact Jane Doe please"}) + "\n", encoding="utf-8")
+    text = "reach me at user@example.com"
+    raw.write_text(json.dumps({"text": text}) + "\n", encoding="utf-8")
 
     def _fake_batch(
         texts: list[str],
@@ -92,13 +95,13 @@ def test_presidio_batch_findings_applied(
         n_process: int | None = None,
         batch_size: int | None = None,
     ) -> list[list[SafetyFinding]]:
-        assert texts == ["Contact Jane Doe please"]
+        assert texts == [text]
         return [
             [
                 SafetyFinding(
                     source="presidio",
-                    kind="PERSON",
-                    detail="score=0.95",
+                    kind="EMAIL_ADDRESS",
+                    detail="score=0.80",
                 )
             ]
         ]
@@ -112,11 +115,11 @@ def test_presidio_batch_findings_applied(
         limit=None,
     )
     assert scanned == 1
-    assert failed == 0
-    assert not failures
-    assert len(warns) == 1
-    assert warns[0]["warn_count"] == 1
-    assert any(f["source"] == "presidio" for f in warns[0]["safety"]["findings"])
+    assert failed == 1
+    assert len(failures) == 1
+    assert not warns
+    assert failures[0]["block_count"] == 1
+    assert any(f["source"] == "presidio" for f in failures[0]["safety"]["findings"])
 
 
 def test_presidio_skips_diff_harness_rows(
@@ -223,8 +226,12 @@ def test_main_smoke_writes_failures_and_warns(
     assert "Warn-only rows written" in out
     assert fail_out.is_file()
     assert warn_out.is_file()
-    fail_rows = [json.loads(line) for line in fail_out.read_text().splitlines() if line.strip()]
-    warn_rows = [json.loads(line) for line in warn_out.read_text().splitlines() if line.strip()]
+    fail_rows = [
+        json.loads(line) for line in fail_out.read_text().splitlines() if line.strip()
+    ]
+    warn_rows = [
+        json.loads(line) for line in warn_out.read_text().splitlines() if line.strip()
+    ]
     assert len(fail_rows) == 1
     assert len(warn_rows) == 1
 
@@ -269,11 +276,9 @@ def test_main_parallel_workers(
 ) -> None:
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
-    files = []
     for i in range(2):
         path = raw_dir / f"row{i}.jsonl"
         path.write_text(json.dumps({"text": f"row {i}"}) + "\n", encoding="utf-8")
-        files.append(path)
 
     class _FakeFuture:
         def __init__(self, result: tuple) -> None:
@@ -295,7 +300,11 @@ def test_main_parallel_workers(
         def submit(self, fn: object, payload: tuple) -> _FakeFuture:
             return _FakeFuture(fn(payload))  # type: ignore[operator,misc]
 
+    def _fake_as_completed(futures: list) -> list:
+        return futures
+
     monkeypatch.setattr("concurrent.futures.ProcessPoolExecutor", _FakePool)
+    monkeypatch.setattr("concurrent.futures.as_completed", _fake_as_completed)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -311,5 +320,7 @@ def test_main_parallel_workers(
     main()
     out = capsys.readouterr().out
     assert "scan-raw: 2 file(s), 2 worker(s)" in out
-    assert "presidio_mp='nested-off'" in out or "presidio_mp=nested-off" in out
+    assert "presidio_mp=nested-off" in out
+    assert "row0.jsonl:" in out
+    assert "row1.jsonl:" in out
     assert "Total:" in out

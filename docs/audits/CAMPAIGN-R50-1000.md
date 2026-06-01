@@ -6,8 +6,11 @@
 |-------|------|--------|
 | 1 | AUDIT | 20 | ✓ |
 | 2 | FIX | 20 | ✓ (15 substantive) |
-| 3 | AUDIT | 20 | in progress |
-| 4 | FIX | 20 | queued |
+| 3 | AUDIT | 20 | batched — invalid count |
+| 4–8 | mixed | ~25 | batched — invalid count |
+| 9 | AUDIT | 20 | ✓ 1 scope/agent |
+| 10 | FIX | 16 | ✓ (S02/S07/S09 PASS skip) |
+| 11 | AUDIT | 20 | queued |
 | … | alt | … |
 | 50 | AUDIT | 20 | final sign-off |
 
@@ -59,8 +62,9 @@
 ### R5 AUDIT ✓ — dedupe FAIL (18+ dup clusters), ruff PASS (E402 waived), HTTP tests added
 ### R6 FIX ✓ — message_blocks.py shared helpers, ruff per-file-ignores, API version 2026-03-10 on REST client
 
-**Progress:** 8 / 50 rounds (~160 agents). **Target:** 1000 agents total.
+**Rule:** 1 Task subagent = 1 scope (S01–S20). Never batch S01–S05 in one agent.
 
-### R7–R8 ✓ message_blocks PASS; qwen dedupe; 248 tests; ruff clean
+**Progress:** 10 / 50 rounds | **~116 valid agents / 1000** | **290 tests, ruff clean**
 
-### R9 AUDIT — in progress (agents 161–180)
+### R9 AUDIT ✓ — 4 PASS / 16 FAIL
+### R10 FIX ✓ — registry search terms, cline say/ask, openhands path, claude ingest, mix/curate, warehouse/gpu, train/eval, presidio, makefile, dedupe amp/opencode, graphql retry, scan_raw 99%, PUBLIC-DATASETS doc

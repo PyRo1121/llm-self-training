@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from llm_dataprep.message_blocks import role_and_text_from_opencode
 from llm_dataprep.raw_io import append_records
 
 DEFAULT_DB = Path.home() / ".local/share/opencode/opencode.db"
@@ -79,16 +80,7 @@ def _ingest_legacy_json(root: Path, *, limit_files: int | None) -> Iterator[dict
             obj = json.loads(fpath.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
-        role = obj.get("role")
-        parts = obj.get("parts") or obj.get("content")
-        text = ""
-        if isinstance(parts, list):
-            for p in parts:
-                if isinstance(p, dict) and p.get("type") == "text":
-                    text += (p.get("text") or "") + "\n"
-        elif isinstance(obj.get("text"), str):
-            text = obj["text"]
-        text = text.strip()
+        role, text = role_and_text_from_opencode(obj)
         if role not in ("user", "assistant") or not text:
             continue
         yield {

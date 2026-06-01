@@ -42,7 +42,12 @@ from llm_dataprep.github_harvest_registry import (
     DEFAULT_EXCLUDE_PATH_REGEX,
     registry_queries,
 )
-from llm_dataprep.message_blocks import USER_QUERY_RE, text_from_content_blocks
+from llm_dataprep.amp_threads import _text_from_message as _text_from_amp_message
+from llm_dataprep.message_blocks import (
+    USER_QUERY_RE,
+    role_and_text_from_opencode,
+    text_from_content_blocks,
+)
 from llm_dataprep.raw_io import append_records_buffered, dated_raw_path
 
 API_ROOT = "https://api.github.com"
@@ -807,25 +812,6 @@ def detect_harness(path: str, hint: str | None = None) -> str:
     return hint or "generic"
 
 
-def _text_from_opencode_message(obj: dict[str, Any]) -> tuple[str | None, str]:
-    """Match opencode_db legacy message JSON (role + parts[])."""
-    info = obj.get("info")
-    if isinstance(info, dict):
-        role = info.get("role")
-        parts = obj.get("parts") or info.get("parts")
-    else:
-        role = obj.get("role")
-        parts = obj.get("parts") or obj.get("content")
-    text = ""
-    if isinstance(parts, list):
-        for part in parts:
-            if isinstance(part, dict) and part.get("type") == "text":
-                text += (part.get("text") or "") + "\n"
-    elif isinstance(obj.get("text"), str):
-        text = obj["text"]
-    return role, text.strip()
-
-
 def _line_looks_like_chat(obj: dict[str, Any], harness: str) -> bool:
     if harness == "cursor":
         role = obj.get("role")
@@ -920,8 +906,13 @@ def _line_looks_like_chat(obj: dict[str, Any], harness: str) -> bool:
         role, text = _text_from_history_item(obj)
         return role in ("user", "assistant") and bool(text.strip())
     if harness == "opencode":
-        role, text = _text_from_opencode_message(obj)
+        role, text = role_and_text_from_opencode(obj)
         return role in ("user", "assistant") and bool(text.strip())
+    if harness == "amp":
+        role = obj.get("role")
+        if role not in ("user", "assistant"):
+            return False
+        return bool(_text_from_amp_message(obj))
     if harness == "openclaw":
         if obj.get("type") not in ("message", "custom_message"):
             return False
@@ -952,23 +943,6 @@ def _line_looks_like_chat(obj: dict[str, Any], harness: str) -> bool:
                 return True
         message = obj.get("message")
         return isinstance(message, dict) and isinstance(message.get("content"), (str, list))
-    if harness == "amp":
-        role = obj.get("role")
-        if role not in ("user", "assistant"):
-            return False
-        content = obj.get("content")
-        if isinstance(content, str):
-            return bool(content.strip())
-        if isinstance(content, list):
-            return any(
-                isinstance(block, dict)
-                and (
-                    (block.get("type") == "text" and block.get("text"))
-                    or block.get("text")
-                )
-                for block in content
-            )
-        return bool((obj.get("text") or "").strip())
     role = obj.get("role")
     if role not in ("user", "assistant", "tool", "developer"):
         return False
@@ -2018,6 +1992,8 @@ def _parse_whole_json_blob(
         yield from _parse_openhands_event_json(obj, hit=hit, ingested_at=ingested_at)
         return
     session_id = Path(hit.path).stem
+    if harness == "amp" and obj.get("id"):
+        session_id = str(obj["id"])
 
     def emit(role: str | None, body: str, line_no: int) -> Iterator[dict[str, Any]]:
         if role not in ("user", "assistant") or not body.strip():
@@ -2037,7 +2013,7 @@ def _parse_whole_json_blob(
         yield rec
 
     if harness == "opencode":
-        role, text_val = _text_from_opencode_message(obj)
+        role, text_val = role_and_text_from_opencode(obj)
         if role in ("user", "assistant") and text_val:
             yield from emit(role, text_val, 1)
     elif obj.get("role") in ("user", "assistant"):
@@ -2056,8 +2032,14 @@ def _parse_whole_json_blob(
                 yield from emit(role, content, i)
                 continue
             if harness == "opencode":
-                role, content = _text_from_opencode_message(msg)
+                role, content = role_and_text_from_opencode(msg)
                 yield from emit(role, content, i)
+                continue
+            if harness == "amp":
+                role = msg.get("role")
+                if role in ("user", "assistant"):
+                    body = _text_from_amp_message(msg)
+                    yield from emit(role, body, i)
                 continue
             role = msg.get("role") or msg.get("type")
             if role in ("human", "Human"):
