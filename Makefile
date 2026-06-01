@@ -19,6 +19,12 @@ UV               := uv run --package
 
 .PHONY: help
 help: ## Show targets
+	@echo ""
+	@echo "  One-shot:"
+	@grep -E '^(prep|train|train-cloud):.*##' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[33m%-22s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "  All targets:"
 	@grep -E '^[a-zA-Z0-9_.-]+:.*##' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
@@ -30,18 +36,40 @@ help: ## Show targets
 sync: ## Core + API deps
 	uv sync --package llm-core --package llm-api
 
-sync-all: ## Core, train, eval, dataprep, API
-	uv sync --package llm-core --package llm-train --package llm-eval --package llm-api
-	uv sync --package llm-dataprep --extra git
+sync-all: ## Core, train, eval, dataprep, API (single sync — avoids extra churn)
+	uv sync \
+		--package llm-core \
+		--package llm-train \
+		--package llm-eval \
+		--package llm-api \
+		--package llm-dataprep \
+		--extra full
 
 sync-train: ## Train stack (Unsloth)
 	uv sync --package llm-train --extra unsloth
 
-sync-dataprep: ## Ingest + git extras
-	uv sync --package llm-dataprep --extra git
+sync-dataprep: ## Ingest + git + Presidio extras
+	uv sync --package llm-dataprep --extra full
 
-sync-safety: ## Presidio PII scanner
-	uv sync --package llm-dataprep --extra safety
+sync-safety: ## Alias — same as sync-dataprep (uv sync drops extras if split)
+	uv sync --package llm-dataprep --extra full
+
+sync-harvest: ## GitHub harvest (dataprep + redis for local cache)
+	uv sync --package llm-dataprep --extra full --extra harvest
+
+.PHONY: redis-up redis-down redis-ping
+redis-up: ## Start project-local Valkey on :6380 (REDIS_PASSWORD in .env)
+	@chmod +x scripts/redis-local.sh
+	@if [ -f .env ]; then set -a; source .env; set +a; fi; \
+	bash scripts/redis-local.sh
+
+redis-down: ## Stop project-local Valkey
+	@chmod +x scripts/redis-local-stop.sh
+	bash scripts/redis-local-stop.sh
+
+redis-ping: ## Ping local Redis
+	@if [ -f .env ]; then set -a; source .env; set +a; fi; \
+	redis-cli -p $${REDIS_PORT:-6380} -a "$$REDIS_PASSWORD" ping
 
 # =============================================================================
 # Data — ingest
@@ -81,25 +109,49 @@ public-ingest-stream: sync-dataprep ## Legacy Hub streaming ingest (slow; debugg
 public-list: ## List public dataset registry
 	$(UV) llm-dataprep public-ingest --list
 
+.PHONY: github-harvest github-harvest-dry github-harvest-full redis-up redis-down redis-ping
+github-harvest: sync-harvest ## GitHub code search → data/raw/public-github-sessions-*.jsonl
+	@if [ -f .env ]; then set -a; source .env; set +a; fi; \
+	$(UV) llm-dataprep github-harvest
+
+github-harvest-dry: sync-harvest ## Dry-run harvest (search hits only; no download)
+	@if [ -f .env ]; then set -a; source .env; set +a; fi; \
+	$(UV) llm-dataprep github-harvest --dry-run
+
+github-harvest-full: sync-safety sync-harvest ## Harvest → scan → curate public-github rows only
+	@if [ -f .env ]; then set -a; source .env; set +a; fi; \
+	$(UV) llm-dataprep github-harvest && \
+	SCAN_WORKERS=$${SCAN_WORKERS:-4} $(UV) llm-dataprep scan-raw \
+		--glob 'public-github-*.jsonl' --gitleaks --gitleaks-per-file \
+		--workers $${SCAN_WORKERS:-4} && \
+	CURATE_WORKERS=$${CURATE_WORKERS:-8} $(UV) llm-dataprep curate-raw \
+		--honor-safety-failures --workers $${CURATE_WORKERS:-8} \
+		--glob 'public-github-*.jsonl'
+
 # =============================================================================
-# Data — sanitize / curate (secrets + PII)
+# Data — sanitize / curate (secrets + PII; block/warn + allowlist)
 # =============================================================================
 
-.PHONY: sanitize scan curate curate-fast audit-sample
-sanitize: sync-safety ## Scan raw JSONL for secrets + PII (gitleaks if on PATH)
-	$(UV) llm-dataprep scan-raw --gitleaks --gitleaks-per-file
+SAFETY_FIXTURES ?= packages/dataprep/tests/fixtures/safety_eval.jsonl
 
-scan: sanitize ## Alias for sanitize
+.PHONY: sanitize scan safety-eval curate curate-fast audit-sample
+sanitize: sync-safety ## Pipeline 1/3: parallel scan-raw (gitleaks-per-file, Presidio) → safety-failures
+	SCAN_WORKERS=$${SCAN_WORKERS:-8} $(UV) llm-dataprep scan-raw --gitleaks --gitleaks-per-file --workers $${SCAN_WORKERS:-8}
 
-curate: sync-dataprep ## Raw → curated (honors safety-failures; gitleaks+presidio if installed)
-	$(UV) llm-dataprep curate-raw
+scan: sanitize ## Alias — scan-raw → safety-failures (then make curate)
+
+safety-eval: sync-safety ## Fixture regression (block/warn, diff mode; P/R/F1)
+	$(UV) llm-dataprep safety-eval --fixtures $(SAFETY_FIXTURES)
+
+curate: sync-dataprep ## Pipeline 2/3: curate-raw (honors safety-failures; batch Presidio)
+	CURATE_WORKERS=$${CURATE_WORKERS:-8} $(UV) llm-dataprep curate-raw --honor-safety-failures --workers $${CURATE_WORKERS:-8}
 
 curate-fast: sync-dataprep ## Curate without per-row scanners (public bulk)
 	$(UV) llm-dataprep curate-raw --no-gitleaks --no-presidio \
 		--latest-per-prefix \
 		--exclude-glob 'public-stack-v2-dedup*.jsonl'
 
-audit-sample: ## 50-row secrets/PII audit from latest curated file
+audit-sample: ## Pipeline 3/3: 50-row audit from latest curated (operator sign-off)
 	@latest=$$(ls -t data/curated/curated*.jsonl 2>/dev/null | head -1); \
 	if [ -z "$$latest" ]; then echo "No curated/*.jsonl — run make curate first"; exit 1; fi; \
 	$(UV) llm-dataprep audit-sample --curated "$$latest"
@@ -136,8 +188,39 @@ warehouse-load: ## Index latest curated JSONL into control_plane.db
 warehouse-smoke: ## Quick warehouse health check
 	$(UV) llm-core warehouse-smoke
 
-lake-stats: ## Stats on raw + latest curated
-	$(UV) llm-dataprep lake-stats --latest-curated
+lake-stats: ## Stats on latest curated (skips full raw scan)
+	$(UV) llm-dataprep lake-stats --latest-curated --skip-raw
+
+# =============================================================================
+# One-shot operators (start here)
+# =============================================================================
+
+.PHONY: prep prep-bg train train-cloud
+prep: ## Personal + public data → data/train/personal-first.jsonl (.env loads HF_TOKEN)
+	bash scripts/prep-all.sh $(if $(REPO),--repo $(REPO),)
+
+prep-bg: ## prep in background (log: logs/prep-*.log)
+	@mkdir -p logs
+	@if [[ -f logs/prep.pid ]] && kill -0 "$$(cat logs/prep.pid)" 2>/dev/null; then \
+		echo "prep already running (pid $$(cat logs/prep.pid)) — tail -f logs/prep-*.log"; \
+		exit 0; \
+	fi
+	@rm -f logs/prep.lock
+	@LOG="logs/prep-$$(date -u +%Y%m%dT%H%M%SZ).log"; \
+	nohup bash -c 'exec 9>logs/prep.lock; flock -n 9 || { echo "prep: flock failed"; exit 1; }; bash scripts/prep-all.sh' \
+		> "$$LOG" 2>&1 & \
+		echo $$! > logs/prep.pid; \
+		echo "prep running in background (pid $$(cat logs/prep.pid)) — tail -f $$LOG"
+
+train: gpu-clear ## Local GPU QLoRA (run make prep first; RUN=pyro-coder-bootstrap)
+	$(MAKE) sync-train prepare-mixed
+	$(UV) llm-train train-qlora --run-name $(RUN) --train-file $(TRAIN_FILE)
+
+train-cloud: ## Rent Vast H100 + ingest/train/export (HF_TOKEN in .env)
+	bash scripts/cloud/run-vast.sh
+
+train-cloud-smoke: ## Vast H100 smoke (5 train steps)
+	bash scripts/cloud/run-vast.sh --smoke-only
 
 .PHONY: manifest manifest-personal manifest-mixed extract extract-personal extract-mixed
 manifest: manifest-mixed ## Default: 80/20 personal/public mix (config training_mix)
@@ -174,6 +257,10 @@ extract-personal: ## Extract personal-only train file
 data-public: public-ingest curate warehouse-load ## Ingest public HF + curate + index
 	@echo "Public data indexed. Run: make prepare-mixed"
 
+.PHONY: parse-all-public
+parse-all-public: ## Full public parse smallest→largest (ingest+scan+curate); logs/parse-public-*.log
+	FORCE_RECONVERT=$${FORCE_RECONVERT:-0} bash scripts/parse-public-ordered.sh
+
 data-public-fast: public-ingest curate-fast warehouse-load ## Public ingest + fast curate (no presidio)
 
 prepare-mixed: extract-mixed ## Manifest + extract for mixed train (80/20)
@@ -204,21 +291,18 @@ train-preflight-promote: sync-train ## Promote profile preflight
 train-dry-run: sync-train prepare-mixed ## Dataset stats only, no GPU
 	$(UV) llm-train train-qlora --dry-run --train-file $(TRAIN_FILE)
 
-.PHONY: train train-smoke train-personal train-mixed train-promote
-train-smoke: sync-train prepare-mixed ## ~5 step smoke (RUN=smoke-test)
+.PHONY: train-smoke train-personal train-mixed train-promote
+train-smoke: gpu-clear sync-train prepare-mixed ## ~5 step smoke (RUN=smoke-test)
 	$(UV) llm-train train-qlora --smoke --run-name $(if $(filter smoke-test,$(RUN)),$(RUN),smoke-test)
 
-train: sync-train prepare-mixed ## Full bootstrap QLoRA (RUN=pyro-coder-bootstrap)
-	$(UV) llm-train train-qlora --run-name $(RUN) --train-file $(TRAIN_FILE)
-
-train-personal: sync-train prepare-personal ## Train on personal data only
+train-personal: gpu-clear sync-train prepare-personal ## Train on personal data only
 	$(UV) llm-train train-qlora \
 		--run-name $(if $(filter pyro-coder-bootstrap,$(RUN)),pyro-coder-personal,$(RUN)) \
 		--train-file data/train/personal-only.jsonl
 
 train-mixed: train ## Alias — personal + public HF mix (default)
 
-train-promote: sync-train prepare-mixed ## Promote profile (Unsloth, higher rank)
+train-promote: gpu-clear sync-train prepare-mixed ## Promote profile (Unsloth, higher rank)
 	$(UV) llm-train train-preflight --promote
 	$(UV) llm-train train-qlora --promote --run-name $(RUN) --train-file $(TRAIN_FILE)
 

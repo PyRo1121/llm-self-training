@@ -16,6 +16,10 @@ def repo_root() -> Path:
 
 
 def data_dir() -> Path:
+    """Override with LLM_DATA_DIR to put data/raw, warehouse, etc. on another volume."""
+    env = os.environ.get("LLM_DATA_DIR")
+    if env:
+        return Path(env).resolve()
     return repo_root() / "data"
 
 
@@ -37,3 +41,10 @@ def warehouse_db() -> Path:
 
 def chroma_dir() -> Path:
     return data_dir() / "chroma_db"
+
+
+def hf_cache_dir() -> Path:
+    env = os.environ.get("LLM_HF_CACHE_DIR")
+    if env:
+        return Path(env).resolve()
+    return data_dir() / "hf_cache"

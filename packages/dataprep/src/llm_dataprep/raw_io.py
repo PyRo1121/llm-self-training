@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -25,10 +26,41 @@ def append_records(
     replace: bool = False,
 ) -> tuple[Path, int]:
     path = dated_raw_path(prefix, out_dir)
-    count = 0
+    write_fresh = replace or not path.is_file()
+    count = append_records_buffered(
+        path, records, buffer_rows=500, replace=write_fresh
+    )
+    return path, count
+
+
+def append_records_buffered(
+    path: Path,
+    records: Iterator[dict[str, Any]],
+    *,
+    buffer_rows: int = 500,
+    replace: bool = True,
+) -> int:
+    """Write JSONL with batched buffer flushes."""
     mode = "w" if replace else "a"
+    count = 0
+    buf: list[str] = []
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open(mode, encoding="utf-8") as fh:
         for rec in records:
-            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            buf.append(json.dumps(rec, ensure_ascii=False))
             count += 1
-    return path, count
+            if len(buf) >= buffer_rows:
+                fh.write("\n".join(buf) + "\n")
+                buf.clear()
+        if buf:
+            fh.write("\n".join(buf) + "\n")
+    return count
+
+
+def merge_jsonl_parts(parts: list[Path], out_path: Path) -> None:
+    """Concatenate worker part files into one JSONL (streaming, low RAM)."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("wb") as out_fh:
+        for part in parts:
+            with part.open("rb") as in_fh:
+                shutil.copyfileobj(in_fh, out_fh)

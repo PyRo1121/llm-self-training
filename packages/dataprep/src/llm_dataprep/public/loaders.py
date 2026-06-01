@@ -4,9 +4,50 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any, Iterator
 
-from llm_dataprep.public.records import iter_messages_records, make_record
+from llm_dataprep.public.records import (
+    _message_text,
+    iter_messages_records,
+    make_record,
+)
+
+_LOADER_CTX: dict[str, Any] = {"local_dir": None, "shard_files": None}
+
+
+def set_loader_context(
+    *,
+    local_dir: str | Path | None,
+    shard_files: list[str | Path] | None = None,
+) -> None:
+    _LOADER_CTX["local_dir"] = str(local_dir) if local_dir else None
+    _LOADER_CTX["shard_files"] = (
+        [str(p) for p in shard_files] if shard_files else None
+    )
+
+
+def _active_local_dir(local_dir: str | Path | None) -> Path | None:
+    if local_dir is not None:
+        root = Path(local_dir)
+    else:
+        raw = _LOADER_CTX.get("local_dir")
+        root = Path(raw) if raw else None
+    if root is None or not root.is_dir():
+        return None
+    return root
+
+
+def _active_shard_files(
+    shard_files: list[str | Path] | None,
+    root: Path,
+) -> list[Path]:
+    if shard_files is not None:
+        return [Path(p) for p in shard_files]
+    ctx = _LOADER_CTX.get("shard_files")
+    if ctx:
+        return [Path(p) for p in ctx]
+    return sorted(root.rglob("*.parquet"))
 
 _CODE_HINTS = frozenset(
     {
@@ -55,17 +96,74 @@ def _hf_auth_label() -> str:
         return "authenticated (token present)"
 
 
+def _iter_parquet_file(path: Path, *, batch_size: int = 256) -> Iterator[dict[str, Any]]:
+    """Memory-mapped parquet row iteration (no datasets Arrow cache rebuild)."""
+    import pyarrow.parquet as pq
+
+    pf = pq.ParquetFile(path)
+    for batch in pf.iter_batches(batch_size=batch_size):
+        yield from batch.to_pylist()
+
+
+def _iter_local_parquet_shards(shard_paths: list[Path]) -> Iterator[dict[str, Any]]:
+    for path in shard_paths:
+        yield from _iter_parquet_file(path)
+
+
 def _stream_dataset(
     repo: str,
     *,
     split: str = "train",
-    data_files: str | dict[str, str] | None = None,
+    data_files: str | dict[str, str] | list[str] | None = None,
     config: str | None = None,
     token: str | None = None,
+    local_dir: str | Path | None = None,
+    shard_files: list[str | Path] | None = None,
+    streaming: bool | None = None,
 ):
+    """Load rows from a HF dataset — local cache (mmap) or Hub (streaming).
+
+    When a local HF snapshot cache is active (via ``set_loader_context`` or
+    ``local_dir``), parquet/json files are read from disk with
+    ``streaming=False`` so datasets uses memory-mapped Arrow/Parquet (fast).
+    Remote Hub access uses ``streaming=True`` to avoid re-downloading per row.
+    """
     from datasets import load_dataset
 
-    kwargs: dict[str, Any] = {"split": split, "streaming": True}
+    root = _active_local_dir(local_dir)
+    use_streaming = streaming if streaming is not None else root is None
+
+    if root is not None:
+        if data_files is not None and not isinstance(data_files, dict):
+            rel = data_files if isinstance(data_files, str) else data_files[0]
+            path = root / rel
+            if path.is_file():
+                if path.suffix == ".parquet":
+                    return _iter_local_parquet_shards([path])
+                return load_dataset(
+                    "json",
+                    data_files=str(path),
+                    split=split,
+                    streaming=False,
+                )
+        shard_paths = _active_shard_files(shard_files, root)
+        if shard_paths:
+            return _iter_local_parquet_shards(shard_paths)
+        try:
+            kwargs: dict[str, Any] = {
+                "path": str(root),
+                "split": split,
+                "streaming": False,
+            }
+            if config:
+                kwargs["name"] = config
+            if token:
+                kwargs["token"] = token
+            return load_dataset(**kwargs)
+        except Exception:
+            pass
+
+    kwargs: dict[str, Any] = {"split": split, "streaming": use_streaming}
     if data_files:
         kwargs["data_files"] = data_files
     if config:
@@ -80,8 +178,20 @@ def _stream_hf_jsonl(
     relpath: str,
     *,
     token: str | None = None,
+    local_dir: str | Path | None = None,
 ) -> Iterator[dict[str, Any]]:
-    """Stream JSONL from an HF dataset repo (tolerates mixed column types)."""
+    """Stream JSONL from a local HF cache copy or remote repo."""
+    root = _active_local_dir(local_dir)
+    if root is not None:
+        path = root / relpath
+        if path.is_file():
+            with path.open(encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line:
+                        yield json.loads(line)
+            return
+
     from huggingface_hub import HfFileSystem
 
     fs = HfFileSystem(token=token)
@@ -308,13 +418,118 @@ def load_swe_chat(
         )
 
 
-def load_opencode_broad(
+def _append_tool_calls(content: str, tool_calls: Any) -> str:
+    if not tool_calls or not isinstance(tool_calls, list):
+        return content
+    parts = [content] if content else []
+    for tc in tool_calls:
+        if not isinstance(tc, dict):
+            continue
+        fn = tc.get("function") or {}
+        name = fn.get("name") or "tool"
+        args = fn.get("arguments") or ""
+        text = str(args)
+        if len(text) > 480:
+            text = text[:477] + "…"
+        parts.append(f"[tool {name}] {text}")
+    return "\n".join(p for p in parts if p).strip()
+
+
+def _normalize_openhands_messages(trajectory: list[Any]) -> list[dict[str, Any]]:
+    """OpenHands SWE-Zero rows: role/content (+ optional tool_calls on assistant)."""
+    out: list[dict[str, Any]] = []
+    for item in trajectory:
+        if not isinstance(item, dict):
+            continue
+        role = (item.get("role") or "").lower()
+        content = _message_text(item.get("content"))
+        if role == "assistant":
+            content = _append_tool_calls(content, item.get("tool_calls"))
+        if not content:
+            continue
+        out.append({"role": role, "content": content})
+    return out
+
+
+def load_swe_zero_12m(
     *,
     max_rows: int | None = None,
-    hf_repo: str = "EER6/nvidia-OpenCodeInstruct-broad",
+    hf_repo: str = "AlienKevin/SWE-ZERO-12M-trajectories",
+    exit_status: str | None = "Submitted",
     **_: Any,
 ) -> Iterator[dict[str, Any]]:
-    return _load_opencode_pair(hf_repo=hf_repo, dataset_id="opencode_broad", max_rows=max_rows)
+    """SWE-Zero 12M mini-swe-agent trajectories (messages[] per row)."""
+    ds = _stream_dataset(hf_repo)
+    count = 0
+    for idx, row in enumerate(ds):
+        if max_rows is not None and count >= max_rows:
+            break
+        status = row.get("exit_status")
+        if exit_status is not None and status != exit_status:
+            continue
+        messages = row.get("messages")
+        if not isinstance(messages, list) or len(messages) < 2:
+            continue
+        iid = row.get("instance_id") or f"swe-zero-12m-{idx}"
+        sid = f"{iid}-{idx}"
+        extra = {
+            "repo": row.get("repo"),
+            "exit_status": status,
+            "trajectory_format": row.get("trajectory_format"),
+            "duration_sec": row.get("duration_sec"),
+        }
+        yield from iter_messages_records(
+            dataset_id="swe_zero_12m",
+            session_id=str(sid),
+            messages=messages,
+            hf_repo=hf_repo,
+            map_tool_to_user=True,
+            verify="swe_zero_trajectory",
+            extra=extra,
+        )
+        count += 1
+
+
+def load_swe_zero_openhands(
+    *,
+    max_rows: int | None = None,
+    hf_repo: str = "nvidia/SWE-Zero-openhands-trajectories",
+    require_patch: bool = True,
+    **_: Any,
+) -> Iterator[dict[str, Any]]:
+    """NVIDIA SWE-Zero OpenHands trajectories (trajectory[] + model_patch)."""
+    ds = _stream_dataset(hf_repo)
+    count = 0
+    for idx, row in enumerate(ds):
+        if max_rows is not None and count >= max_rows:
+            break
+        patch = (row.get("model_patch") or "").strip()
+        if require_patch and not patch:
+            continue
+        traj = row.get("trajectory")
+        if not isinstance(traj, list) or len(traj) < 2:
+            continue
+        messages = _normalize_openhands_messages(traj)
+        if len(messages) < 2:
+            continue
+        sid = row.get("trajectory_id") or row.get("instance_id") or f"swe-zero-oh-{idx}"
+        extra = {
+            "repo": row.get("repo"),
+            "instance_id": row.get("instance_id"),
+            "source_dataset": row.get("dataset"),
+            "license": row.get("license"),
+            "has_patch": bool(patch),
+        }
+        yield from iter_messages_records(
+            dataset_id="swe_zero_openhands",
+            session_id=str(sid),
+            messages=messages,
+            hf_repo=hf_repo,
+            map_tool_to_user=True,
+            verify="swe_zero_openhands",
+            extra=extra,
+        )
+        count += 1
 
 
 def load_opencode_refined(
@@ -367,118 +582,6 @@ def _load_opencode_pair(
         count += 1
 
 
-def load_nemotron_swe(
-    *,
-    max_rows: int | None = None,
-    hf_repo: str = "nvidia/Nemotron-Cascade-SFT-SWE",
-    **_: Any,
-) -> Iterator[dict[str, Any]]:
-    ds = _stream_dataset(hf_repo)
-    count = 0
-    for idx, row in enumerate(ds):
-        if max_rows is not None and count >= max_rows:
-            break
-        messages = row.get("messages")
-        if not isinstance(messages, list):
-            continue
-        sid = f"nemotron-swe-{idx}"
-        yield from iter_messages_records(
-            dataset_id="nemotron_swe",
-            session_id=sid,
-            messages=messages,
-            hf_repo=hf_repo,
-            map_tool_to_user=False,
-            verify="nemotron_swe",
-            extra={"category": row.get("category"), "source": row.get("source")},
-        )
-        count += 1
-
-
-def load_self_code_align(
-    *,
-    max_rows: int | None = None,
-    hf_repo: str = "bigcode/self-oss-instruct-sc2-exec-filter-50k",
-    **_: Any,
-) -> Iterator[dict[str, Any]]:
-    ds = _stream_dataset(hf_repo)
-    count = 0
-    for idx, row in enumerate(ds):
-        if max_rows is not None and count >= max_rows:
-            break
-        user = (row.get("instruction") or row.get("prompt") or "").strip()
-        assistant = (row.get("response") or "").strip()
-        if not user or not assistant:
-            continue
-        sid = str(row.get("id") or row.get("fingerprint") or f"sc2-{idx}")
-        yield make_record(
-            dataset_id="self_code_align",
-            session_id=sid,
-            line_no=1,
-            role="user",
-            text=user,
-            hf_repo=hf_repo,
-            verify="exec_filtered",
-        )
-        yield make_record(
-            dataset_id="self_code_align",
-            session_id=sid,
-            line_no=2,
-            role="assistant",
-            text=assistant,
-            hf_repo=hf_repo,
-            verify="exec_filtered",
-        )
-        count += 1
-
-
-def _load_instruction_pair(
-    *,
-    hf_repo: str,
-    dataset_id: str,
-    max_rows: int | None,
-    verify: str,
-    user_keys: tuple[str, ...] = ("input", "instruction", "problem", "prompt"),
-    assistant_keys: tuple[str, ...] = ("output", "response", "solution"),
-) -> Iterator[dict[str, Any]]:
-    ds = _stream_dataset(hf_repo)
-    count = 0
-    for idx, row in enumerate(ds):
-        if max_rows is not None and count >= max_rows:
-            break
-        user = ""
-        for key in user_keys:
-            user = (row.get(key) or "").strip()
-            if user:
-                break
-        assistant = ""
-        for key in assistant_keys:
-            assistant = (row.get(key) or "").strip()
-            if assistant:
-                break
-        if not user or not assistant:
-            continue
-        sid = str(row.get("id") or row.get("index") or f"{dataset_id}-{idx}")
-        yield make_record(
-            dataset_id=dataset_id,
-            session_id=sid,
-            line_no=1,
-            role="user",
-            text=user,
-            hf_repo=hf_repo,
-            verify=verify,
-        )
-        yield make_record(
-            dataset_id=dataset_id,
-            session_id=sid,
-            line_no=2,
-            role="assistant",
-            text=assistant,
-            hf_repo=hf_repo,
-            verify=verify,
-        )
-        count += 1
-
-
 def _parse_messages_field(raw: Any) -> list[dict[str, Any]]:
     if isinstance(raw, list):
         return [m for m in raw if isinstance(m, dict)]
@@ -500,96 +603,6 @@ def load_zen_agentic(**_: Any) -> Iterator[dict[str, Any]]:
         "When shards are available, install llm-dataprep[zed] for zstd streaming."
     )
     yield {}  # pragma: no cover
-
-
-ULTRADATA_CONFIGS: tuple[str, ...] = ("Knowledge", "Code", "Math")
-ULTRADATA_SPLIT = "no_think"  # also available: think (reasoning traces)
-
-
-def load_ultradata_sft_2605(
-    *,
-    max_rows: int | None = None,
-    hf_repo: str = "openbmb/UltraData-SFT-2605",
-    **_: Any,
-) -> Iterator[dict[str, Any]]:
-    """UltraData multi-config SFT — Knowledge, Code, Math (no_think split)."""
-    token = _hf_token()
-    count = 0
-    for cfg in ULTRADATA_CONFIGS:
-        if max_rows is not None and count >= max_rows:
-            break
-        cap = None if max_rows is None else max_rows - count
-        ds = _stream_dataset(hf_repo, config=cfg, split=ULTRADATA_SPLIT, token=token)
-        for idx, row in enumerate(ds):
-            if cap is not None and count >= cap:
-                break
-            messages = _parse_messages(row.get("messages"))
-            if not messages:
-                continue
-            sid = str(row.get("uid") or f"ultradata-{cfg}-{idx}")
-            extra = {
-                "ultradata_config": cfg,
-                "ultradata_split": ULTRADATA_SPLIT,
-                "domain": row.get("domain"),
-                "source_subset": row.get("source"),
-            }
-            yield from iter_messages_records(
-                dataset_id="ultradata_sft_2605",
-                session_id=sid,
-                messages=messages,
-                hf_repo=hf_repo,
-                map_tool_to_user=False,
-                verify="ultradata_sft",
-                extra=extra,
-            )
-            count += 1
-
-
-def load_high_coder_sft(
-    *,
-    max_rows: int | None = None,
-    hf_repo: str = "Crownelius/High-Coder-SFT-Medium",
-    **_: Any,
-) -> Iterator[dict[str, Any]]:
-    ds = _stream_dataset(hf_repo)
-    count = 0
-    for idx, row in enumerate(ds):
-        if max_rows is not None and count >= max_rows:
-            break
-        provenance = row.get("provenance") if isinstance(row.get("provenance"), dict) else {}
-        user = (provenance.get("prompt") or "").strip()
-        content = row.get("content") if isinstance(row.get("content"), dict) else {}
-        assistant = (content.get("text") or "").strip()
-        if not user or not assistant:
-            continue
-        sid = str(row.get("sample_id") or f"high-coder-{idx}")
-        lang = row.get("language")
-        loc = None
-        lc = row.get("long_criteria")
-        if isinstance(lc, dict):
-            loc = lc.get("loc")
-        extra = {"language": lang, "loc": loc}
-        yield make_record(
-            dataset_id="high_coder_sft",
-            session_id=sid,
-            line_no=1,
-            role="user",
-            text=user,
-            hf_repo=hf_repo,
-            verify="synthetic_longform",
-            extra=extra,
-        )
-        yield make_record(
-            dataset_id="high_coder_sft",
-            session_id=sid,
-            line_no=2,
-            role="assistant",
-            text=assistant,
-            hf_repo=hf_repo,
-            verify="synthetic_longform",
-            extra=extra,
-        )
-        count += 1
 
 
 def load_agentic_sft_new(
@@ -626,48 +639,233 @@ def load_agentic_cot_coding(
     )
 
 
-def load_agent_trove(
+def load_ling_coder_sft(
     *,
     max_rows: int | None = None,
-    hf_repo: str = "open-thoughts/AgentTrove",
+    hf_repo: str = "inclusionAI/Ling-Coder-SFT",
     **_: Any,
 ) -> Iterator[dict[str, Any]]:
+    """ShareGPT-style coding SFT (messages + mid)."""
     ds = _stream_dataset(hf_repo)
-    yield from _load_instruction_pairs(
-        ds,
-        dataset_id="agent_trove",
-        hf_repo=hf_repo,
-        max_rows=max_rows,
-        verify="agent_trove",
-    )
+    count = 0
+    for idx, row in enumerate(ds):
+        if max_rows is not None and count >= max_rows:
+            break
+        messages = _parse_messages(row.get("messages"))
+        if not messages or len(messages) < 2:
+            continue
+        sid = str(row.get("mid") or f"ling-coder-{idx}")
+        yield from iter_messages_records(
+            dataset_id="ling_coder_sft",
+            session_id=sid,
+            messages=messages,
+            hf_repo=hf_repo,
+            map_tool_to_user=True,
+            verify="ling_coder_sft",
+            extra={"languages": row.get("languages"), "tags": row.get("tags")},
+        )
+        count += 1
 
 
-def load_codex_7m(
+def _nemotron_swe_v2_splits(splits: list[str] | str | None) -> tuple[str, ...]:
+    if splits is None:
+        return ("agentless",)
+    if isinstance(splits, str):
+        return tuple(s.strip() for s in splits.split(",") if s.strip())
+    return tuple(str(s).strip() for s in splits if str(s).strip())
+
+
+def load_nemotron_swe_v2(
     *,
     max_rows: int | None = None,
-    hf_repo: str = "Modotte/CodeX-7M-Non-Thinking",
+    hf_repo: str = "nvidia/Nemotron-SFT-SWE-v2",
+    splits: list[str] | str | None = None,
     **_: Any,
 ) -> Iterator[dict[str, Any]]:
-    return _load_instruction_pair(
-        hf_repo=hf_repo,
-        dataset_id="codex_7m",
-        max_rows=max_rows,
-        verify="codex_instruction",
-    )
+    """NVIDIA SWE SFT v2 — default split agentless (openhands_swe fails HF streaming cast)."""
+    token = _hf_token()
+    count = 0
+    for split in _nemotron_swe_v2_splits(splits):
+        if max_rows is not None and count >= max_rows:
+            break
+        if split == "openhands_swe":
+            print(
+                "nemotron_swe_v2: skipping openhands_swe (HF streaming schema cast error); "
+                "use agentless only",
+                flush=True,
+            )
+            continue
+        try:
+            ds = _stream_dataset(hf_repo, split=split, token=token)
+        except Exception as exc:
+            print(f"nemotron_swe_v2: skip split {split!r} — {exc}", flush=True)
+            continue
+        for idx, row in enumerate(ds):
+            if max_rows is not None and count >= max_rows:
+                break
+            messages = _parse_messages(row.get("messages"))
+            if not messages or len(messages) < 2:
+                continue
+            sid = str(row.get("uuid") or f"nemotron-swe-v2-{split}-{idx}")
+            yield from iter_messages_records(
+                dataset_id="nemotron_swe_v2",
+                session_id=sid,
+                messages=messages,
+                hf_repo=hf_repo,
+                map_tool_to_user=True,
+                verify="nemotron_swe_v2",
+                extra={"hf_split": split},
+            )
+            count += 1
 
 
-def load_codex_2m_thinking(
+COOPER_QWEN9B_COOP_REPO = "CooperBench/qwen9b-coop-claude-code"
+COOPER_TRAJ_FILES = ("agent1_traj.json", "agent2_traj.json")
+
+
+def _cooper_traj_path(log_dir: str, traj_file: str) -> str:
+    log_dir = log_dir.strip().lstrip("/")
+    return f"coop/{log_dir}/{traj_file}" if not log_dir.startswith("coop/") else f"{log_dir}/{traj_file}"
+
+
+def load_cooper_qwen9b_coop_claude(
     *,
     max_rows: int | None = None,
-    hf_repo: str = "Modotte/CodeX-2M-Thinking",
+    hf_repo: str = COOPER_QWEN9B_COOP_REPO,
+    traj_files: list[str] | str | None = None,
     **_: Any,
 ) -> Iterator[dict[str, Any]]:
-    return _load_instruction_pair(
-        hf_repo=hf_repo,
-        dataset_id="codex_2m_thinking",
-        max_rows=max_rows,
-        verify="codex_thinking",
-    )
+    """
+    CooperBench two-agent coop trajectories (Claude Code on Qwen3.5-9B).
+
+    HF index rows point at coop/<repo>/<task>/<features>/agent{1,2}_traj.json.
+    """
+    if isinstance(traj_files, str):
+        files = tuple(s.strip() for s in traj_files.split(",") if s.strip())
+    elif traj_files:
+        files = tuple(str(f).strip() for f in traj_files if str(f).strip())
+    else:
+        files = COOPER_TRAJ_FILES
+
+    token = _hf_token()
+    fs = None
+    root = _active_local_dir(None)
+    if root is None:
+        from huggingface_hub import HfFileSystem
+
+        fs = HfFileSystem(token=token)
+    ds = _stream_dataset(hf_repo, token=token)
+    pairs = 0
+    for idx, row in enumerate(ds):
+        if max_rows is not None and pairs >= max_rows:
+            break
+        log_dir = str(row.get("log_dir") or "").strip()
+        if not log_dir:
+            continue
+        repo_name = str(row.get("repo") or "repo")
+        task_id = row.get("task_id")
+        features = str(row.get("features") or "")
+        both_passed = row.get("both_passed")
+        base_extra = {
+            "cooper_setting": row.get("setting"),
+            "cooper_model": row.get("model"),
+            "both_passed": both_passed,
+            "pair_tokens": row.get("pair_tokens"),
+            "task_repo": repo_name,
+            "task_id": task_id,
+            "features": features,
+        }
+        pair_key = f"{repo_name}-{task_id}-{features}"
+        emitted_pair = False
+        for traj_file in files:
+            rel = _cooper_traj_path(log_dir, traj_file)
+            if root is not None:
+                local_path = root / rel
+                if not local_path.is_file():
+                    print(f"cooper_qwen9b_coop: skip {local_path} — missing", flush=True)
+                    continue
+                try:
+                    with local_path.open(encoding="utf-8") as fh:
+                        traj = json.load(fh)
+                except OSError as exc:
+                    print(f"cooper_qwen9b_coop: skip {local_path} — {exc}", flush=True)
+                    continue
+            else:
+                hf_path = f"datasets/{hf_repo}/{rel}"
+                try:
+                    with fs.open(hf_path, "r") as fh:
+                        traj = json.load(fh)
+                except OSError as exc:
+                    print(f"cooper_qwen9b_coop: skip {hf_path} — {exc}", flush=True)
+                    continue
+            messages = traj.get("messages")
+            if not isinstance(messages, list) or len(messages) < 2:
+                continue
+            agent_id = str(traj.get("agent_id") or traj_file.replace("_traj.json", ""))
+            sid = f"{pair_key}-{agent_id}"
+            traj_src = str(local_path if root is not None else hf_path)
+            yield from iter_messages_records(
+                dataset_id="cooper_qwen9b_coop_claude",
+                session_id=sid,
+                messages=messages,
+                hf_repo=hf_repo,
+                map_tool_to_user=True,
+                verify="cooperbench_coop",
+                extra={
+                    **base_extra,
+                    "agent_id": agent_id,
+                    "agent_status": traj.get("status"),
+                    "hf_traj_path": traj_src,
+                },
+            )
+            emitted_pair = True
+        if emitted_pair:
+            pairs += 1
+
+
+def load_scale_swe(
+    *,
+    max_rows: int | None = None,
+    hf_repo: str = "AweAI-Team/Scale-SWE",
+    **_: Any,
+) -> Iterator[dict[str, Any]]:
+    """SWE-bench-style problem_statement + patch pairs."""
+    ds = _stream_dataset(hf_repo)
+    count = 0
+    for idx, row in enumerate(ds):
+        if max_rows is not None and count >= max_rows:
+            break
+        problem = (row.get("problem_statement") or "").strip()
+        patch = (row.get("patch") or "").strip()
+        if not problem or not patch:
+            continue
+        sid = str(row.get("instance_id") or f"scale-swe-{idx}")
+        extra = {
+            "repo": row.get("repo"),
+            "language": row.get("language"),
+            "github_url": row.get("github_url"),
+        }
+        yield make_record(
+            dataset_id="scale_swe",
+            session_id=sid,
+            line_no=1,
+            role="user",
+            text=problem,
+            hf_repo=hf_repo,
+            verify="swe_patch",
+            extra=extra,
+        )
+        yield make_record(
+            dataset_id="scale_swe",
+            session_id=sid,
+            line_no=2,
+            role="assistant",
+            text=patch,
+            hf_repo=hf_repo,
+            verify="swe_patch",
+            extra=extra,
+        )
+        count += 1
 
 
 NEMOTRON_OPENCODE_SPLITS = (
@@ -749,42 +947,5 @@ def load_coderforge_preview(
                 "finish_reason": row.get("finish_reason"),
                 "license": row.get("license"),
             },
-        )
-        count += 1
-
-
-def load_magicoder(
-    *,
-    max_rows: int | None = None,
-    hf_repo: str = "ise-uiuc/Magicoder-OSS-Instruct-75K",
-    **_: Any,
-) -> Iterator[dict[str, Any]]:
-    ds = _stream_dataset(hf_repo)
-    count = 0
-    for idx, row in enumerate(ds):
-        if max_rows is not None and count >= max_rows:
-            break
-        user = (row.get("problem") or row.get("instruction") or "").strip()
-        assistant = (row.get("solution") or row.get("response") or "").strip()
-        if not user or not assistant:
-            continue
-        sid = str(row.get("index") or row.get("raw_index") or f"magicoder-{idx}")
-        yield make_record(
-            dataset_id="magicoder_75k",
-            session_id=sid,
-            line_no=1,
-            role="user",
-            text=user,
-            hf_repo=hf_repo,
-            verify="synthetic_oss",
-        )
-        yield make_record(
-            dataset_id="magicoder_75k",
-            session_id=sid,
-            line_no=2,
-            role="assistant",
-            text=assistant,
-            hf_repo=hf_repo,
-            verify="synthetic_oss",
         )
         count += 1

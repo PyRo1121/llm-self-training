@@ -11,7 +11,7 @@ from llm_core import data_dir
 from llm_core.yaml_config import load_yaml_config
 from llm_dataprep.public.fast_ingest import ingest_one_fast
 from llm_dataprep.public.hf_cache import apply_hf_download_env, hf_cache_root
-from llm_dataprep.public.loaders import _hf_auth_label, _hf_token
+from llm_dataprep.public.loaders import _hf_auth_label
 from llm_dataprep.public.registry import get_spec, list_specs
 
 

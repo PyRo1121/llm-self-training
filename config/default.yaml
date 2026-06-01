@@ -7,7 +7,7 @@ project:
 ollama:
   host: http://127.0.0.1:11434
   inference_model: qwen2.5-coder:7b
-  # RAG Phase 3+ — you already have qwen3-embedding:4b (better than nomic); see docs/OLLAMA-INVENTORY.md
+  # RAG — see docs/oss/OLLAMA-INVENTORY.md
   embed_model: qwen3-embedding:4b
   embed_model_fallback: nomic-embed-text
   debug_judge_model: deepseek-r1:7b
@@ -35,6 +35,16 @@ gpu_mutex:
     - hyprwhspr.service
   kill_process_substrings:
     - hyprwhspr
+    - helium-browser
+    - chrome --type=gpu-process
+    - chrome --type=renderer
+    - google-chrome
+    - chromium
+    - brave-browser
+    - firefox
+    - librewolf
+    - msedge
+    - zen
     - ollama
     - llama-server
     - llama.cpp
@@ -61,7 +71,7 @@ gpu_mutex:
 train:
   backend: unsloth                     # unsloth (default) | chronicals
   base_model: Qwen/Qwen2.5-Coder-7B-Instruct
-  # 4070 Ti 12 GB Unsloth: batch=2 seq<=2048 @ ~10 GiB free (no CPU activation offload)
+  # 4070 Ti 12 GB Unsloth bootstrap: r16 no-FA2 → seq≤1024 (vram_budget caps further)
   max_seq_length: 768
   max_seq_length_12gb_cap: 768
   max_chars_per_message: null
@@ -80,21 +90,22 @@ train:
   seed: 3407
   # neftune_noise_alpha: 5   # optional A/B
 
-  # Applied with: train-qlora --promote (world-class Unsloth on 4070 Ti)
+  # Applied with: train-qlora --promote (4070 Ti — FA2 unlocks 2048; no-FA2 r32 caps @ 768)
   promote:
-    max_seq_length: 2048          # not 4096 — OOM on 12GB without FA2 (drop to 1024 if tight)
+    max_seq_length: 2048          # aspiration when flash-attn + BFD pack installed
     max_seq_length_12gb_cap: 2048
+    max_chars_per_message: 12288  # ~3k tok/msg — long chats truncated before GPU tokenize
     lora_r: 32
-    lora_alpha: 64                # 2× rank (2026 consensus)
+    lora_alpha: 64                # 2× rank (Unsloth + QLoRA consensus)
     lora_dropout: 0.0
     learning_rate: 1.5e-4         # continual / quality sweet spot for Qwen2.5-Coder
     per_device_train_batch_size: 1
-    gradient_accumulation_steps: 12  # eff batch 12 — stable on 10–11 GiB VRAM
-    max_steps_cap: 400
+    gradient_accumulation_steps: 16  # eff batch 16 (Unsloth docs sweet spot)
+    max_steps_cap: 400            # ignored when unsloth.clamp_to_one_epoch=true
     warmup_ratio: 0.10
     weight_decay: 0.01
     num_epochs: 1
-    # neftune_noise_alpha: 5      # A/B if style gate fails
+    # neftune_noise_alpha: 5      # A/B only — enable after stable promote + eval gate
 
   # Abliterated base + promote profile (--decensor on train-qlora)
   # Pre-abliterated Qwen2.5-Coder-7B; train-download-base caches weights while GPU train runs.
@@ -110,11 +121,59 @@ unsloth:
   use_prequantized: true
   prequantized_model: unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit
   load_in_4bit: true
-  target_modules: all-linear       # all attention + MLP (QLoRA paper / Unsloth default)
+  target_modules: all-linear       # causal LM → q/k/v/o + gate/up/down (not vision string API)
   use_gradient_checkpointing: unsloth
   use_rslora: true
   disable_torch_compile: true      # NOT torch.compile — step-0 VRAM spike on 12GB
-  packing: false                   # Unsloth padding-free auto; explicit packing=False
+  packing: false                   # manual BFD when auto_pack_with_fa2 + FA2 installed
+  packing_strategy: bfd_split      # TRL: bfd_split preserves long rows; bfd discards overflow
+  auto_pack_with_fa2: true        # BFD pack when FA2 and padding-free off
+  auto_padding_free: true          # FA2: Unsloth padding-free (~30-50% VRAM); needs flash-attn
+  padding_free: false              # set by runtime when auto_padding_free + FA2
+  disable_auto_padding_free: true  # runtime clears when FA2 + auto_padding_free
+  pack_by_data_source: true        # BFD pack personal/public separately when packing
+  stratified_eval_holdout: true    # 80/20 mix mirrored in eval split
+  use_lora_plus: true
+  lora_plus_lr_ratio: 16.0
+  activation_offloading: false     # promote enables when FA2 (CPU RAM tradeoff)
+  allow_activation_offload_without_fa: true  # stretch no-FA2 to 1024 when GPU reclaimed
+  unsloth_tiled_mlp: false         # promote enables @ seq≥1536 (VRAM headroom)
+  tiled_mlp_min_seq: 1536
+  use_liger_kernel: false          # experimental with Unsloth+PEFT — off by default
+  eval_holdout_ratio: 0.10
+  eval_steps: 32
+  eval_step_divisor: 6             # eval ~every 16% of epoch; save_steps matched
+  vram_probe_max_seq: 2048
+  token_audit_headroom_ratio: 1.05
+  dataloader_num_workers: 0
+  dataloader_pin_memory: true
+  effective_batch_target: 16       # Unsloth docs: batch×grad_accum=16
+  clamp_to_one_epoch: true         # quality: one pass unless --max-steps set
+  token_audit: true                # TRL: pick max_length from length distribution
+  token_audit_percentile: 95        # p99 too outlier-heavy for coding chats; TRL warns long max_length → OOM
+  token_audit_round_to: 256
+  token_audit_min_seq: 512
+  # Rank-aware VRAM ceilings (4070 Ti 12GB) — see vram_budget.unsloth_vram_seq_ceiling
+  max_seq_12gb_no_fa: 768          # legacy fallback
+  max_seq_12gb_no_fa_r16: 1024     # bootstrap r16, no FA2 — post-load may downgrade
+  max_seq_12gb_no_fa_r32: 768      # promote r32, no FA2 — proven stable on 4070 Ti
+  max_seq_12gb_no_fa_r32_reclaimed: 1024  # no-FA2 stretch when free≥10.8 GiB + activation offload
+  no_fa_stretch_min_free_gb: 10.8
+  max_seq_12gb_no_fa_r64: 512
+  max_seq_12gb_with_fa: 2048       # FA2 + padding-free path
+  max_seq_12gb_with_fa_r16: 2048
+  max_seq_12gb_with_fa_r32: 2048
+  max_seq_12gb_with_fa_r64: 1536
+  max_seq_tight_vram: 768          # free VRAM < 9.5 GiB pre-load (no FA2)
+  max_seq_moderate_vram: 1024      # free VRAM < 10.5 GiB pre-load (no FA2)
+  max_seq_tight_vram_fa: 1536      # FA2 + free < 9.0 GiB
+  max_seq_moderate_vram_fa: 2048   # FA2 + free < 9.5 GiB (browser closed → usually 2048)
+  vram_probe_batch_size: 2         # only when FA2 + free≥10 GiB (see vram_budget.py)
+  step0_headroom_mib: 1200         # min free MiB after model load (fused LoRA MLP step-0)
+  eval_holdout_ratio: 0.10
+  eval_steps: 32
+  eval_step_divisor: 6
+  load_best_model_at_end: true
   optim: adamw_8bit
   max_grad_norm: 1.0               # NOT 0.3 — 0.3 diverged on Chronicals promote-v2
   lr_scheduler_type: cosine
@@ -124,6 +183,11 @@ unsloth:
   promote:
     dataset_num_proc: 8            # i9 tokenize prefetch (12 if CPU-only bottleneck)
     lr_scheduler_type: cosine
+    dataloader_num_workers: 4      # FA2 only at runtime; forced 0 without FA2 (12GB)
+    dataloader_prefetch_factor: 2
+    activation_offloading: true    # TRL activation offload when FA2 (or no-FA stretch)
+    unsloth_tiled_mlp: true        # VRAM headroom @ seq≥1536 (2048 promote)
+    # neftune_noise_alpha: 5       # A/B if style eval fails after v2
 
 # Chronicals runtime (legacy --chronicals backend only)
 chronicals:
@@ -157,25 +221,17 @@ data:
   personal_ratio_mature: 0.80
 
 # Training mix from warehouse — personal always included; public capped
+# True-data policy: personal agent logs are primary; public only if explicitly "wild/real" (see docs/oss/PUBLIC-DATASETS.md).
 training_mix:
   prioritize_personal: true       # never drop personal rows when building a manifest
-  personal_ratio: 0.80            # target: 80% personal / 20% public (PLAN mature)
-  public_cap: null                 # null = ratio-only cap; set int to hard-limit public rows
-  public_dataset_priority:        # fill public quota from Top 10 first (docs/PUBLIC-DATASETS.md)
+  personal_ratio: 1.0             # true-data: personal only until you opt into vetted public
+  public_cap: 5000                 # hard cap when public enabled (swe_chat etc.)
+  public_dataset_priority:        # real/wild only — synthetic sets disabled in public_datasets
     - swe_chat
-    - ultradata_sft_2605
-    - coderforge_preview
-    - swe_next
-    - nemotron_opencode
-    - high_coder_sft
-    - agentic_sft_new
-    - agentic_cot_coding
-    - agent_trove
+    - github_public
     - zen_agentic
-    - codex_7m
-    - codex_2m_thinking
-  personal_sample_weight: 1.0     # for future weighted SFT (Phase 2)
-  public_sample_weight: 0.35
+  personal_sample_weight: 1.0
+  public_sample_weight: 0.25
 
 # Curation policy (operator intent — not enforced by keyword filters in dataprep)
 curation:
@@ -189,6 +245,16 @@ curation:
   max_chars_per_message: 16000
   max_messages_per_example: 24
   chunk_overlap_messages: 4
+  # Personal agent logs (Cursor/Codex): long sessions are tool-heavy; public defaults are too lossy.
+  personal:
+    min_message_chars: 8          # keep tool turns; structured [tool …] text, not noise
+    min_messages: 4               # drop trivial 2-turn ping-pong
+    min_total_chars: 400          # stricter than public (200)
+  by_harness:
+    cursor:
+      min_message_chars: 8
+    codex:
+      min_message_chars: 12
   # Illegal use is out of scope for dataset filters; handle at runtime / human judgment.
 
 replay:
@@ -200,67 +266,68 @@ phase1:
   audit_sample_size: 50
 
 # Public HF datasets → data/raw/public-*.jsonl (then curate-raw / phase1)
-# Final Top 10 plan: docs/PUBLIC-DATASETS.md
+# Final Top 10 plan: docs/oss/PUBLIC-DATASETS.md
 public_datasets:
   enabled: true
+  ingest:
+    mode: fast                    # fast | stream — fast = snapshot cache + local parquet
+    cache_dir: hf_cache           # under LLM_DATA_DIR or repo data/
+    download_workers: 16          # snapshot_download max_workers
+    convert_workers: 12           # parallel parquet → JSONL (multi-shard sets; raise if RAM headroom)
+    refresh_download: false
+    write_buffer_rows: 500
   datasets:
-    # --- Top 10 (May 2026) ---
-    ultradata_sft_2605:
-      enabled: true
-      max_rows: 50000
+    # --- Real / wild (optional public supplement) ---
     swe_chat:
       enabled: true
-      max_rows: 200000   # conversation rows before session grouping
-    coderforge_preview:
-      enabled: true
-      max_rows: 10000
+      max_rows: 50000    # wild Cursor/Claude Code sessions — cap; not full 872k
     zen_agentic:
-      enabled: false     # HF placeholder — enable when shards available
+      enabled: false     # enable when HF shards land — real Claude Code + git
       max_rows: 5000
+    # --- Synthetic / agent-rollout / merged SFT (disabled for true-data policy) ---
+    coderforge_preview:
+      enabled: false
+      max_rows: 10000
     swe_next:
-      enabled: true
-      max_rows: null     # all ~3693 trajectories
-    high_coder_sft:
-      enabled: true
-      max_rows: 10000
-    agentic_sft_new:
-      enabled: true
-      max_rows: 10000
-    agentic_cot_coding:
-      enabled: true
-      max_rows: 10000
-    nemotron_opencode:
-      enabled: true
-      max_rows: 10000
-    agent_trove:
-      enabled: true
-      max_rows: 10000
-    # --- Legacy (pre-Top-10) ---
-    opencode_broad:
-      enabled: false
-      max_rows: 10000
-    opencode_refined:
-      enabled: false
-      max_rows: 5000
-    nemotron_swe:
-      enabled: false
-      max_rows: 10000
-    self_code_align:
+      enabled: false     # execution-grounded but agent-simulated trajectories
+      max_rows: null
+    swe_zero_12m:
       enabled: false
       max_rows: null
-    magicoder_75k:
+      exit_status: Submitted
+    swe_zero_openhands:
+      enabled: false
+      max_rows: null
+      require_patch: true
+    agentic_sft_new:
       enabled: false
       max_rows: 10000
-    # --- Optional extras (not Top 10; other chat added) ---
-    codex_7m:
-      enabled: true
+    agentic_cot_coding:
+      enabled: false
       max_rows: 10000
-    codex_2m_thinking:
-      enabled: true
-      max_rows: 5000
+    nemotron_opencode:
+      enabled: false
+      max_rows: 10000
+    cooper_qwen9b_coop_claude:
+      enabled: false     # benchmark coop sim, not wild user logs
+      max_rows: null
+    # --- Legacy (pre-Top-10) ---
+    opencode_refined:
+      enabled: false
+      max_rows: null
+    ling_coder_sft:
+      enabled: false
+      max_rows: null
+    nemotron_swe_v2:
+      enabled: false
+      max_rows: null
+      splits: agentless
+    scale_swe:
+      enabled: false
+      max_rows: null
 
 warehouse:
-  # Phase 1.5 — docs/TURSO.md (enable experimental_features only after reading each flag page)
+  # Turso — docs/oss/TURSO.md (enable experimental_features only after reading each flag page)
   path: data/warehouse/control_plane.db
   driver: turso  # sqlite | turso (pyturso)
   sync:
@@ -288,9 +355,62 @@ ingest:
   continue_sessions: ~/.continue/sessions
   gemini_tmp: ~/.gemini/tmp
   cline_cli: ~/.cline/data
-  codex_max_file_mb: 50
+  codex_max_file_mb: 200   # long rollouts (2–12h sessions); was 50 (dropped ~125MB files)
   git_max_commits: 500
   # windsurf: ~/.codeium/windsurf/cascade — encrypted; UI export only
+
+# Safety scan policy (scan-raw, curate, audit-sample) — see config/safety-allowlist.yaml
+safety:
+  version: 1                          # bump when block thresholds / entities change
+  quarantine_severity: block          # block | warn — only block-level findings quarantine rows
+  gitleaks_severity: block            # block | warn — gitleaks hits (after allowlist)
+  diff_harnesses:                     # scan added lines only for these harnesses (diff_scan.py)
+    - git
+    - git-diffs
+  presidio:
+    min_score:                        # below threshold → drop finding (no quarantine)
+      EMAIL_ADDRESS: 0.55
+      PHONE_NUMBER: 0.65
+      US_SSN: 0.75
+      CREDIT_CARD: 0.75
+      US_BANK_NUMBER: 0.75
+      IBAN_CODE: 0.75
+      IP_ADDRESS: 0.85
+      PERSON: 0.92
+      LOCATION: 0.95                  # scanned but warn-only unless in block_entities
+      DATE_TIME: 0.95
+      NRP: 0.95
+      HF_TOKEN: 0.85
+      CURSOR_TOKEN: 0.85
+      TURSO_TOKEN: 0.85
+    entities:                         # omit noisy LOCATION/NRP/DATE_TIME from scan surface
+      - EMAIL_ADDRESS
+      - PHONE_NUMBER
+      - US_SSN
+      - CREDIT_CARD
+      - US_BANK_NUMBER
+      - IBAN_CODE
+      - IP_ADDRESS
+      - US_DRIVER_LICENSE
+      - US_PASSPORT
+      - CRYPTO
+      - MEDICAL_LICENSE
+      - HF_TOKEN
+      - CURSOR_TOKEN
+      - TURSO_TOKEN
+    block_entities:                   # presidio kinds that quarantine when above min_score
+      - EMAIL_ADDRESS
+      - PHONE_NUMBER
+      - US_SSN
+      - CREDIT_CARD
+      - US_BANK_NUMBER
+      - IBAN_CODE
+      - US_DRIVER_LICENSE
+      - US_PASSPORT
+      - CRYPTO
+      - HF_TOKEN
+      - CURSOR_TOKEN
+      - TURSO_TOKEN
 
 eval:
   style_win_rate_delta: 0.05
